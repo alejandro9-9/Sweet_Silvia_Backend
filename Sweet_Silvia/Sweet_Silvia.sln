@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37314.3
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sweet_Silvia_Domain", "Sweet_Silvia_Domain\Sweet_Silvia_Domain.csproj", "{C10163DA-A158-45BB-A3DB-21F57CBD4431}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sweet_Silvia_Application", "Sweet_Silvia_Application\Sweet_Silvia_Application.csproj", "{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C10163DA-A158-45BB-A3DB-21F57CBD4431}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C10163DA-A158-45BB-A3DB-21F57CBD4431}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C10163DA-A158-45BB-A3DB-21F57CBD4431}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C10163DA-A158-45BB-A3DB-21F57CBD4431}.Release|Any CPU.Build.0 = Release|Any CPU
+		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {42DD55CC-7063-4F21-8F45-CE1EAC31EC0B}
+	EndGlobalSection
+EndGlobal
