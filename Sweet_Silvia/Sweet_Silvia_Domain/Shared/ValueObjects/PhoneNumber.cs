@@ -16,7 +16,12 @@ public sealed record PhoneNumber
             throw new ArgumentException("Phone number is required.", nameof(value));
         }
 
-        value = value.Trim();
+        value = value.Trim().Replace(" ", string.Empty);
+
+        if (value.StartsWith("+51", StringComparison.Ordinal))
+        {
+            value = value[3..];
+        }
 
         if (value.Length != 9)
         {
