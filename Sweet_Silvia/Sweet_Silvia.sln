@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sweet_Silvia_Domain", "Swee
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sweet_Silvia_Application", "Sweet_Silvia_Application\Sweet_Silvia_Application.csproj", "{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sweet_Silvia_Infrastructure", "Sweet_Silvia_Infrastructure\Sweet_Silvia_Infrastructure.csproj", "{C7B2DE16-7AEF-482A-847B-B0A36986475A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{66E1B8B3-EBED-4A3B-9C9E-BB2027F33DEA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7B2DE16-7AEF-482A-847B-B0A36986475A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7B2DE16-7AEF-482A-847B-B0A36986475A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7B2DE16-7AEF-482A-847B-B0A36986475A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7B2DE16-7AEF-482A-847B-B0A36986475A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
