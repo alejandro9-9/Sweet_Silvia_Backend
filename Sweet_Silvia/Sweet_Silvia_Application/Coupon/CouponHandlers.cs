@@ -14,7 +14,7 @@ internal sealed class CreateCouponCommandHandler(IRepository<CouponEntity> coupo
     public async Task<Result<Guid>> Handle(CreateCouponCommand request, CancellationToken cancellationToken)
     {
         var code = CouponCode.Create(request.Code);
-        if (coupons.Query().Any(coupon => coupon.Code.Value == code.Value))
+        if (coupons.Query().Any(coupon => coupon.Code == code))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.CodeAlreadyExists", "Coupon code is already registered."));
         }
@@ -85,7 +85,7 @@ internal sealed class GetCouponByCodeQueryHandler(IRepository<CouponEntity> coup
     public Task<Result<CouponResponse>> Handle(GetCouponByCodeQuery request, CancellationToken cancellationToken)
     {
         var code = CouponCode.Create(request.Code);
-        var coupon = coupons.Query().FirstOrDefault(coupon => coupon.Code.Value == code.Value);
+        var coupon = coupons.Query().FirstOrDefault(coupon => coupon.Code == code);
         return Task.FromResult(coupon is null
             ? Result.Failure<CouponResponse>(ApplicationErrors.NotFound("Coupon"))
             : Result.Success(CouponMappings.ToResponse(coupon)));

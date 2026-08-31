@@ -1,0 +1,86 @@
+GITHUB ENVIRONMENT: stable
+PROJECT: Sweet Silvia Backend
+
+Use these values in GitHub repository settings:
+Settings > Environments > New environment > stable
+
+Add sensitive values as Environment secrets.
+Add non-sensitive values as Environment variables.
+
+========================================
+ENVIRONMENT SECRETS
+========================================
+
+ConnectionStrings__SweetSilviaDatabase
+Example:
+Host=YOUR_POSTGRES_HOST;Port=5432;Database=sweet_silvia;Username=YOUR_POSTGRES_USER;Password=YOUR_POSTGRES_PASSWORD;SSL Mode=Require;Trust Server Certificate=true
+
+Jwt__SecretKey
+Example:
+Use a real random secret with at least 32 bytes.
+
+Email__ApiKey
+Example:
+xkeysib-YOUR_BREVO_API_KEY
+
+========================================
+ENVIRONMENT VARIABLES
+========================================
+
+ASPNETCORE_ENVIRONMENT
+Production
+
+ASPNETCORE_URLS
+http://+:8080
+
+PORT
+8080
+
+Jwt__Issuer
+SweetSilvia
+
+Jwt__Audience
+SweetSilvia
+
+Jwt__ExpirationMinutes
+30
+
+RefreshToken__ExpirationDays
+30
+
+EmailVerification__CodeExpirationMinutes
+10
+
+EmailVerification__ResendCooldownSeconds
+60
+
+Email__Provider
+Brevo
+
+Email__From
+ventas@your-verified-domain.com
+
+Email__FromName
+Sweet Silvia
+
+Roles__CustomerRoleId
+11111111-1111-1111-1111-111111111111
+
+Cors__AllowedOrigins__0
+https://your-production-frontend.com
+
+========================================
+NOTES
+========================================
+
+ConnectionStrings__SweetSilviaDatabase must point to the production/stable PostgreSQL database.
+
+Jwt__SecretKey must not be reused from local development. Generate a new long value for stable.
+
+Email__From must be a verified sender or verified domain inside Brevo. Otherwise Brevo can reject transactional emails.
+
+Use additional CORS origins only if needed:
+Cors__AllowedOrigins__1
+Cors__AllowedOrigins__2
+
+Do not commit real secrets to the repository.

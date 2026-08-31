@@ -251,7 +251,8 @@ internal sealed class CreateProductVariantCommandHandler(IRepository<ProductVari
 {
     public async Task<Result<Guid>> Handle(CreateProductVariantCommand request, CancellationToken cancellationToken)
     {
-        if (variants.Query().Any(variant => variant.Sku.Value == request.Sku))
+        var sku = Sku.Create(request.Sku);
+        if (variants.Query().Any(variant => variant.Sku == sku))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict("ProductVariant.SkuAlreadyExists", "SKU already exists."));
         }
@@ -260,7 +261,7 @@ internal sealed class CreateProductVariantCommandHandler(IRepository<ProductVari
             request.ProductId,
             request.Size,
             request.Color,
-            Sku.Create(request.Sku),
+            sku,
             request.PhysicalStock,
             request.Price.HasValue ? Money.Create(request.Price.Value, request.Currency) : null);
 

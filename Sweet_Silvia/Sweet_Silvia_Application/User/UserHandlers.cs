@@ -25,7 +25,7 @@ internal sealed class CreateUserCommandHandler(
         var email = EmailAddress.Create(request.Email);
         var phone = PhoneNumber.Create(request.Phone);
 
-        if (users.Query().Any(user => user.Email.Value == email.Value))
+        if (users.Query().Any(user => user.Email == email))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict("User.EmailAlreadyExists", "Email is already registered."));
         }
@@ -128,8 +128,8 @@ internal sealed class LoginCommandHandler(
 {
     public async Task<Result<LoginResponse>> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
-        var normalizedEmail = EmailAddress.Create(request.Email).Value;
-        var user = users.Query().FirstOrDefault(user => user.Email.Value == normalizedEmail);
+        var email = EmailAddress.Create(request.Email);
+        var user = users.Query().FirstOrDefault(user => user.Email == email);
 
         if (user is null || !user.IsActive || !passwordHasher.Verify(request.Password, user.PasswordHash))
         {
