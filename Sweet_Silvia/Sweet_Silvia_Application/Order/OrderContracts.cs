@@ -13,4 +13,6 @@ public sealed record ChangeOrderStatusCommand(Guid OrderId, OrderStatus Status, 
 
 public sealed record GetOrderByIdQuery(Guid Id) : IQuery<OrderResponse>;
 
+public sealed record GetOrdersQuery(OrderStatus? Status = null) : IQuery<List<OrderResponse>>;
+
 public sealed record GetOrdersByUserQuery(Guid UserId) : IQuery<List<OrderResponse>>;

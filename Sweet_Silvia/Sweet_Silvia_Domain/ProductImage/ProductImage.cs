@@ -45,4 +45,28 @@ public sealed class ProductImage : Entity
 
         return new ProductImage(Guid.NewGuid(), productId, productVariantId, url.Trim(), altText?.Trim(), order, isMain, DateTimeOffset.UtcNow);
     }
+
+    public void Update(Guid? productVariantId, string url, string? altText, int order, bool isMain)
+    {
+        if (productVariantId == Guid.Empty)
+        {
+            throw new ArgumentException("Product variant id is invalid.", nameof(productVariantId));
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new ArgumentException("Product image url is required.", nameof(url));
+        }
+
+        if (order < 0)
+        {
+            throw new ArgumentException("Image order cannot be negative.", nameof(order));
+        }
+
+        ProductVariantId = productVariantId;
+        Url = url.Trim();
+        AltText = altText?.Trim();
+        Order = order;
+        IsMain = isMain;
+    }
 }

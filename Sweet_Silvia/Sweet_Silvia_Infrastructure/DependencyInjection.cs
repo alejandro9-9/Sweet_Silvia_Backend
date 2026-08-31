@@ -38,6 +38,7 @@ public static class DependencyInjection
                 npgsqlOptions.EnableRetryOnFailure()));
 
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
+        services.AddScoped(typeof(IRepository<>), typeof(EntityRepository<>));
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
         services.AddTransient<IDateTimeProvider, DateTimeProvider>();

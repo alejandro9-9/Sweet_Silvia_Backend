@@ -1,0 +1,630 @@
+REPORTE DE AUTORIZACION PARA LA API - SWEET SILVIA
+
+Roles actuales:
+- Cliente
+- Administrador
+- Asistente
+
+Idea general:
+- Administrador: controla todo el sistema.
+- Asistente: apoya la operacion diaria, pedidos, envios y atencion.
+- Cliente: solo gestiona su propia cuenta, carrito, direcciones, pagos y pedidos.
+
+NOTA:
+Cuando un endpoint permita Cliente, se debe validar tambien que el recurso le pertenezca.
+Ejemplo: un cliente puede ver una orden solo si Order.UserId es igual al userId del token.
+
+
+1. AUTENTICACION / SESIONES
+
+POST /api/auth/login
+Authorize: AllowAnonymous
+Uso: iniciar sesion.
+
+POST /api/auth/refresh
+Authorize: AllowAnonymous
+Uso: renovar access token usando refresh token.
+
+POST /api/auth/logout
+Authorize: Cliente, Administrador, Asistente
+Uso: cerrar sesion actual.
+
+GET /api/refresh-tokens/me
+Authorize: Cliente, Administrador, Asistente
+Uso: listar sesiones propias.
+
+GET /api/refresh-tokens/user/{userId}
+Authorize: Administrador
+Uso: listar sesiones de un usuario.
+
+DELETE /api/refresh-tokens/{id}
+Authorize: Administrador
+Uso: revocar una sesion.
+
+
+2. USUARIOS
+
+GET /api/users
+Authorize: Administrador
+Uso: listar todos los usuarios.
+
+GET /api/users/{id}
+Authorize: Administrador, Asistente
+Uso: ver usuario por id.
+
+GET /api/users/me
+Authorize: Cliente, Administrador, Asistente
+Uso: ver perfil propio.
+
+POST /api/users
+Authorize: AllowAnonymous
+Uso: registrar cliente.
+
+PUT /api/users/{id}
+Authorize: Administrador
+Uso: editar usuario desde administracion.
+
+PUT /api/users/me
+Authorize: Cliente, Administrador, Asistente
+Uso: editar perfil propio.
+
+PATCH /api/users/{id}/block
+Authorize: Administrador
+Uso: bloquear usuario.
+
+PATCH /api/users/{id}/role
+Authorize: Administrador
+Uso: asignar rol.
+
+
+3. ROLES
+
+GET /api/roles
+Authorize: Administrador
+Uso: listar roles.
+
+POST /api/roles
+Authorize: Administrador
+Uso: crear rol.
+
+PUT /api/roles/{id}
+Authorize: Administrador
+Uso: editar rol.
+
+DELETE /api/roles/{id}
+Authorize: Administrador
+Uso: desactivar rol.
+
+
+4. CATEGORIAS
+
+GET /api/categories
+Authorize: AllowAnonymous
+Uso: listar categorias activas para catalogo.
+
+GET /api/categories/{id}
+Authorize: AllowAnonymous
+Uso: ver categoria.
+
+POST /api/categories
+Authorize: Administrador
+Uso: crear categoria.
+
+PUT /api/categories/{id}
+Authorize: Administrador
+Uso: editar categoria.
+
+DELETE /api/categories/{id}
+Authorize: Administrador
+Uso: desactivar categoria.
+
+
+5. COLECCIONES
+
+GET /api/collections
+Authorize: AllowAnonymous
+Uso: listar colecciones activas.
+
+GET /api/collections/{id}
+Authorize: AllowAnonymous
+Uso: ver coleccion.
+
+POST /api/collections
+Authorize: Administrador
+Uso: crear coleccion.
+
+PUT /api/collections/{id}
+Authorize: Administrador
+Uso: editar coleccion.
+
+DELETE /api/collections/{id}
+Authorize: Administrador
+Uso: desactivar coleccion.
+
+
+6. PRODUCTOS
+
+GET /api/products
+Authorize: AllowAnonymous
+Uso: listar productos del catalogo.
+
+GET /api/products/{id}
+Authorize: AllowAnonymous
+Uso: ver detalle de producto.
+
+POST /api/products
+Authorize: Administrador, Asistente
+Uso: crear producto.
+
+PUT /api/products/{id}
+Authorize: Administrador, Asistente
+Uso: editar producto.
+
+DELETE /api/products/{id}
+Authorize: Administrador
+Uso: desactivar producto.
+
+
+7. VARIANTES DE PRODUCTO
+
+GET /api/product-variants/product/{productId}
+Authorize: AllowAnonymous
+Uso: listar tallas, colores, SKU y stock visible.
+
+GET /api/product-variants/{id}
+Authorize: AllowAnonymous
+Uso: ver variante.
+
+POST /api/product-variants
+Authorize: Administrador, Asistente
+Uso: crear variante.
+
+PUT /api/product-variants/{id}
+Authorize: Administrador, Asistente
+Uso: editar variante.
+
+DELETE /api/product-variants/{id}
+Authorize: Administrador
+Uso: desactivar variante.
+
+
+8. IMAGENES DE PRODUCTO
+
+GET /api/product-images/product/{productId}
+Authorize: AllowAnonymous
+Uso: listar imagenes del producto.
+
+POST /api/product-images
+Authorize: Administrador, Asistente
+Uso: subir/agregar imagen.
+
+PUT /api/product-images/{id}
+Authorize: Administrador, Asistente
+Uso: editar imagen, orden o texto alternativo.
+
+DELETE /api/product-images/{id}
+Authorize: Administrador
+Uso: eliminar/desactivar imagen.
+
+
+9. CARRITO
+
+GET /api/cart/me
+Authorize: Cliente
+Uso: ver carrito propio.
+
+POST /api/cart/items
+Authorize: Cliente
+Uso: agregar producto al carrito.
+
+PUT /api/cart/items/{id}
+Authorize: Cliente
+Uso: cambiar cantidad.
+
+DELETE /api/cart/items/{id}
+Authorize: Cliente
+Uso: quitar item del carrito.
+
+POST /api/cart/coupons
+Authorize: Cliente
+Uso: aplicar cupon al carrito.
+
+DELETE /api/cart/coupons/{id}
+Authorize: Cliente
+Uso: quitar cupon aplicado.
+
+
+10. DIRECCIONES
+
+GET /api/addresses/me
+Authorize: Cliente
+Uso: listar direcciones propias.
+
+GET /api/addresses/user/{userId}
+Authorize: Administrador, Asistente
+Uso: ver direcciones de un cliente para atencion/envio.
+
+POST /api/addresses
+Authorize: Cliente
+Uso: crear direccion propia.
+
+PUT /api/addresses/{id}
+Authorize: Cliente
+Uso: editar direccion propia.
+
+DELETE /api/addresses/{id}
+Authorize: Cliente
+Uso: desactivar direccion propia.
+
+
+11. UBIGEO: DEPARTAMENTOS, PROVINCIAS Y DISTRITOS
+
+GET /api/departments
+Authorize: AllowAnonymous
+Uso: listar departamentos aceptados.
+
+GET /api/provinces/department/{departmentId}
+Authorize: AllowAnonymous
+Uso: listar provincias de un departamento.
+
+GET /api/districts/province/{provinceId}
+Authorize: AllowAnonymous
+Uso: listar distritos de una provincia.
+
+POST /api/departments
+Authorize: Administrador, Asistente
+Uso: crear departamento.
+
+POST /api/provinces
+Authorize: Administrador, Asistente
+Uso: crear provincia.
+
+POST /api/districts
+Authorize: Administrador, Asistente
+Uso: crear distrito.
+
+PUT /api/departments/{id}
+Authorize: Administrador, Asistente
+Uso: editar departamento.
+
+PUT /api/provinces/{id}
+Authorize: Administrador, Asistente
+Uso: editar provincia.
+
+PUT /api/districts/{id}
+Authorize: Administrador, Asistente
+Uso: editar distrito.
+
+DELETE /api/departments/{id}
+Authorize: Administrador, Asistente
+Uso: desactivar departamento.
+
+DELETE /api/provinces/{id}
+Authorize: Administrador, Asistente
+Uso: desactivar provincia.
+
+DELETE /api/districts/{id}
+Authorize: Administrador, Asistente
+Uso: desactivar distrito.
+
+
+12. CUPONES
+
+GET /api/coupons
+Authorize: Administrador, Asistente
+Uso: listar cupones.
+
+GET /api/coupons/{id}
+Authorize: Administrador, Asistente
+Uso: ver cupon.
+
+POST /api/coupons
+Authorize: Administrador
+Uso: crear cupon.
+
+PUT /api/coupons/{id}
+Authorize: Administrador
+Uso: editar cupon.
+
+DELETE /api/coupons/{id}
+Authorize: Administrador
+Uso: desactivar cupon.
+
+POST /api/coupons/validate
+Authorize: Cliente
+Uso: validar cupon antes de aplicarlo.
+
+
+13. RESTRICCIONES DE CUPON
+
+GET /api/coupon-restrictions/coupon/{couponId}
+Authorize: Administrador, Asistente
+Uso: listar restricciones de un cupon.
+
+POST /api/coupon-restrictions
+Authorize: Administrador
+Uso: crear restriccion por categoria, producto, variante o coleccion.
+
+DELETE /api/coupon-restrictions/{id}
+Authorize: Administrador
+Uso: quitar restriccion.
+
+
+14. USOS DE CUPON
+
+GET /api/coupon-usages
+Authorize: Administrador
+Uso: listar uso general de cupones.
+
+GET /api/coupon-usages/user/{userId}
+Authorize: Administrador, Asistente
+Uso: ver cupones usados por un usuario.
+
+GET /api/coupon-usages/me
+Authorize: Cliente
+Uso: ver cupones usados por el cliente autenticado.
+
+
+15. ORDENES
+
+GET /api/orders
+Authorize: Administrador, Asistente
+Uso: listar ordenes activas e historial.
+
+GET /api/orders/me
+Authorize: Cliente
+Uso: listar ordenes propias.
+
+GET /api/orders/{id}
+Authorize: Cliente, Administrador, Asistente
+Uso: ver detalle de orden. Cliente solo si la orden es suya.
+
+POST /api/orders
+Authorize: Cliente
+Uso: crear orden desde carrito.
+
+PATCH /api/orders/{id}/status
+Authorize: Administrador, Asistente
+Uso: cambiar estado operativo de orden.
+
+DELETE /api/orders/{id}
+Authorize: Administrador
+Uso: cancelar/anular orden desde administracion.
+
+
+16. ITEMS DE ORDEN
+
+GET /api/order-items/order/{orderId}
+Authorize: Cliente, Administrador, Asistente
+Uso: listar items de una orden. Cliente solo si la orden es suya.
+
+NOTA:
+No se recomienda crear, editar o eliminar OrderItem directamente.
+Los items deben generarse desde el carrito al crear la orden.
+
+
+17. METODOS DE PAGO
+
+GET /api/payment-methods
+Authorize: AllowAnonymous
+Uso: listar metodos disponibles: Yape, Plin, Izipay, efectivo, transferencia.
+
+POST /api/payment-methods
+Authorize: Administrador
+Uso: crear metodo de pago.
+
+PUT /api/payment-methods/{id}
+Authorize: Administrador
+Uso: editar metodo de pago.
+
+DELETE /api/payment-methods/{id}
+Authorize: Administrador
+Uso: desactivar metodo de pago.
+
+
+18. PAGOS
+
+GET /api/payments
+Authorize: Administrador, Asistente
+Uso: listar pagos.
+
+GET /api/payments/order/{orderId}
+Authorize: Cliente, Administrador, Asistente
+Uso: ver pago de una orden. Cliente solo si la orden es suya.
+
+POST /api/payments
+Authorize: Cliente
+Uso: crear pago pendiente para una orden.
+
+NOTA:
+No se recomienda exponer approve/reject directamente en Payments.
+La aprobacion o rechazo debe entrar por PaymentReviews para guardar quien reviso, cuando reviso y que observacion dejo.
+
+
+19. COMPROBANTES DE PAGO
+
+POST /api/payment-receipts
+Authorize: Cliente
+Uso: subir comprobante de Yape, Plin o transferencia.
+
+GET /api/payment-receipts/payment/{paymentId}
+Authorize: Cliente, Administrador, Asistente
+Uso: ver comprobante. Cliente solo si el pago pertenece a su orden.
+
+PUT /api/payment-receipts/{id}
+Authorize: Cliente
+Uso: reemplazar comprobante si fue rechazado.
+
+
+20. REVISION DE PAGO
+
+GET /api/payment-reviews
+Authorize: Administrador
+Uso: listar revisiones de pago.
+
+GET /api/payment-reviews/payment/{paymentId}
+Authorize: Administrador, Asistente
+Uso: ver revision de un pago.
+
+POST /api/payment-reviews
+Authorize: Administrador
+Uso: registrar revision de comprobante. Esta accion aprueba o rechaza el pago.
+
+NOTA:
+Payment representa el estado actual del pago.
+PaymentReview representa el historial/auditoria de la decision.
+Por ejemplo: Payment queda como Approved o Rejected, y PaymentReview guarda el reviewerUserId, fecha, resultado y observacion.
+Si aprobar pago descuenta stock, esta accion deberia quedarse solo en Administrador.
+
+
+21. COURIERS / AGENCIAS
+
+GET /api/couriers
+Authorize: Administrador, Asistente
+Uso: listar agencias y tipos de reparto.
+
+GET /api/couriers/available
+Authorize: AllowAnonymous
+Uso: mostrar opciones disponibles al cliente.
+
+POST /api/couriers
+Authorize: Administrador
+Uso: crear courier/agencia.
+
+PUT /api/couriers/{id}
+Authorize: Administrador
+Uso: editar courier/agencia.
+
+DELETE /api/couriers/{id}
+Authorize: Administrador
+Uso: desactivar courier/agencia.
+
+
+22. TARIFAS DE ENVIO
+
+GET /api/shipping-rates
+Authorize: Administrador, Asistente
+Uso: listar tarifas configuradas.
+
+POST /api/shipping-rates/calculate
+Authorize: Cliente, Administrador, Asistente
+Uso: calcular costo de envio segun destino, agencia y subtotal.
+
+POST /api/shipping-rates
+Authorize: Administrador
+Uso: crear tarifa.
+
+PUT /api/shipping-rates/{id}
+Authorize: Administrador
+Uso: editar tarifa.
+
+DELETE /api/shipping-rates/{id}
+Authorize: Administrador
+Uso: desactivar tarifa.
+
+
+23. ENVIOS
+
+GET /api/shipments
+Authorize: Administrador, Asistente
+Uso: listar envios.
+
+GET /api/shipments/order/{orderId}
+Authorize: Cliente, Administrador, Asistente
+Uso: ver envio de una orden. Cliente solo si la orden es suya.
+
+POST /api/shipments
+Authorize: Administrador, Asistente
+Uso: crear envio para una orden pagada.
+
+PATCH /api/shipments/{id}/register-external
+Authorize: Administrador, Asistente
+Uso: registrar tracking de agencia externa.
+
+PATCH /api/shipments/{id}/status
+Authorize: Administrador, Asistente
+Uso: actualizar estado del envio.
+
+
+24. EVENTOS DE ENVIO
+
+GET /api/shipment-events/shipment/{shipmentId}
+Authorize: Cliente, Administrador, Asistente
+Uso: ver seguimiento de envio. Cliente solo si pertenece a su orden.
+
+POST /api/shipment-events
+Authorize: Administrador, Asistente
+Uso: registrar evento de seguimiento manual o externo.
+
+
+25. MOVIMIENTOS DE STOCK
+
+GET /api/stock-movements
+Authorize: Administrador
+Uso: listar movimientos de stock.
+
+GET /api/stock-movements/product-variant/{productVariantId}
+Authorize: Administrador, Asistente
+Uso: ver historial de stock de una variante.
+
+POST /api/stock-movements/manual-adjustment
+Authorize: Administrador
+Uso: ajuste manual de stock.
+
+NOTA:
+Los movimientos por venta no deberian exponerse como endpoint directo.
+Deben generarse cuando se aprueba el pago.
+
+
+RESUMEN POR ROL
+
+Administrador:
+- Gestionar usuarios.
+- Bloquear usuarios.
+- Asignar roles.
+- Gestionar roles.
+- Gestionar categorias.
+- Gestionar colecciones.
+- Gestionar productos, variantes e imagenes.
+- Gestionar cupones y restricciones.
+- Ver uso de cupones.
+- Ver y cambiar ordenes.
+- Aprobar o rechazar pagos.
+- Gestionar metodos de pago.
+- Gestionar couriers, envios y tarifas.
+- Ajustar stock.
+
+Asistente:
+- Ver usuarios basicos.
+- Ver ordenes.
+- Ver pagos y comprobantes.
+- Ver revisiones de pago.
+- Crear y editar productos.
+- Crear y editar variantes de producto.
+- Crear, editar y desactivar departamentos, provincias y distritos.
+- Gestionar envios.
+- Registrar eventos de envio.
+- Ver tarifas y couriers.
+- Ver historial de stock por variante.
+- Agregar o editar imagenes de producto si se permite.
+- No bloquear usuarios.
+- No asignar roles.
+- No eliminar/desactivar productos.
+- No eliminar/desactivar variantes de producto.
+- No aprobar/rechazar pagos si eso descuenta stock.
+- No ajustar stock manualmente.
+
+Cliente:
+- Registrarse.
+- Iniciar sesion.
+- Ver y editar perfil propio.
+- Gestionar carrito propio.
+- Gestionar direcciones propias.
+- Aplicar cupones.
+- Crear orden.
+- Crear pago pendiente.
+- Subir comprobante.
+- Ver sus ordenes.
+- Ver sus pagos.
+- Ver sus envios.
+- Ver seguimiento de sus envios.

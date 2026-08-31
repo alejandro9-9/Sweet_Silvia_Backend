@@ -8,6 +8,7 @@ using DistrictEntity = Sweet_Silvia_Domain.District.District;
 using PaymentMethodEntity = Sweet_Silvia_Domain.PaymentMethod.PaymentMethod;
 using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 using RoleEntity = Sweet_Silvia_Domain.Role.Role;
+using Sweet_Silvia_Domain.Role;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -110,5 +111,9 @@ internal sealed class RoleConfiguration : IEntityTypeConfiguration<RoleEntity>
         builder.Property(entity => entity.Name).IsRequired().HasMaxLength(80);
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.HasIndex(entity => entity.Name).IsUnique();
+        builder.HasData(
+            RoleEntity.Create(RoleIds.Customer, RoleNames.Customer),
+            RoleEntity.Create(RoleIds.Administrator, RoleNames.Administrator),
+            RoleEntity.Create(RoleIds.Assistant, RoleNames.Assistant));
     }
 }

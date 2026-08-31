@@ -9,10 +9,8 @@ public sealed record CreatePendingPaymentCommand(Guid OrderId, Guid PaymentMetho
 
 public sealed record MarkPaymentReceiptUploadedCommand(Guid PaymentId) : ICommand;
 
-public sealed record ApprovePaymentCommand(Guid PaymentId, Guid ReviewedByUserId, string? Observation) : ICommand;
-
-public sealed record RejectPaymentCommand(Guid PaymentId, Guid ReviewedByUserId, string? Observation) : ICommand;
-
 public sealed record GetPaymentByIdQuery(Guid Id) : IQuery<PaymentResponse>;
+
+public sealed record GetPaymentsQuery(PaymentStatus? Status = null) : IQuery<List<PaymentResponse>>;
 
 public sealed record GetPaymentsByOrderQuery(Guid OrderId) : IQuery<List<PaymentResponse>>;

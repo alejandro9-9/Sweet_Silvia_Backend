@@ -1,0 +1,77 @@
+COMO CORRER SWEET SILVIA EN DOCKER
+
+Requisito:
+- Tener Docker Desktop abierto.
+
+Ubicacion del proyecto:
+C:\Users\Admin\Desktop\Manuel\Sweet Silvia\backend\Sweet_Silvia
+
+
+1. Levantar API + PostgreSQL
+
+Desde esta carpeta:
+
+dotnet build Sweet_Silvia.sln
+docker compose up --build
+
+
+2. Abrir Swagger
+
+http://localhost:8080/swagger
+
+
+3. Ver contenedores
+
+docker compose ps
+
+
+4. Ver logs de la API
+
+docker compose logs -f sweet-silvia-api
+
+
+5. Ver logs de PostgreSQL
+
+docker compose logs -f sweet-silvia-db
+
+
+6. Apagar contenedores
+
+docker compose down
+
+
+7. Apagar y borrar la data de PostgreSQL
+
+docker compose down -v
+
+NOTA:
+Usa este comando solo si quieres reiniciar la base de datos desde cero.
+
+
+8. Datos de PostgreSQL para pruebas
+
+Host desde tu PC:
+localhost
+
+Puerto:
+5432
+
+Database:
+sweet_silvia
+
+Usuario:
+postgres
+
+Password:
+postgres
+
+
+9. Connection string dentro de Docker
+
+Host=sweet-silvia-db;Port=5432;Database=sweet_silvia;Username=postgres;Password=postgres
+
+
+10. Connection string desde tu PC
+
+Host=localhost;Port=5432;Database=sweet_silvia;Username=postgres;Password=postgres
+

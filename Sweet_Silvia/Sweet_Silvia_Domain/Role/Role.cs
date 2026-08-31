@@ -39,4 +39,19 @@ public sealed class Role : Entity
 
         return new Role(id, name.Trim(), true);
     }
+
+    public void Update(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("El nombre del rol es obligatorio.", nameof(name));
+        }
+
+        Name = name.Trim();
+    }
+
+    public void Delete()
+    {
+        IsActive = false;
+    }
 }

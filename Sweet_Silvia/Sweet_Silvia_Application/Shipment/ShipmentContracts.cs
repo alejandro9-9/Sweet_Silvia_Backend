@@ -13,4 +13,6 @@ public sealed record ChangeShipmentStatusCommand(Guid ShipmentId, ShipmentStatus
 
 public sealed record GetShipmentByIdQuery(Guid Id) : IQuery<ShipmentResponse>;
 
+public sealed record GetShipmentsQuery(ShipmentStatus? Status = null) : IQuery<List<ShipmentResponse>>;
+
 public sealed record GetShipmentsByOrderQuery(Guid OrderId) : IQuery<List<ShipmentResponse>>;

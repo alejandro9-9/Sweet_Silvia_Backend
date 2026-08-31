@@ -13,3 +13,5 @@ public sealed record RevokeSessionCommand(string RefreshToken) : ICommand;
 public sealed record LoginResponse(string Token, string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
 
 public sealed record GetRefreshTokensByUserQuery(Guid UserId) : IQuery<List<RefreshTokenResponse>>;
+
+public sealed record RevokeRefreshTokenCommand(Guid Id) : ICommand;
