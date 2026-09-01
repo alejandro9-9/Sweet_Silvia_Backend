@@ -1,0 +1,297 @@
+using Sweet_Silvia_Application.Abstractions.Messaging;
+using Sweet_Silvia_Application.Abstractions.Shipping;
+using Sweet_Silvia_Domain.Abstractions;
+using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
+
+namespace Sweet_Silvia_Application.Olva;
+
+internal sealed class ValidateOlvaApiKeyQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<ValidateOlvaApiKeyQuery, OlvaValidationResponse>
+{
+    public Task<Result<OlvaValidationResponse>> Handle(ValidateOlvaApiKeyQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.ValidateAsync(cancellationToken);
+    }
+}
+
+internal sealed class GetOlvaAgenciesQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
+    : IQueryHandler<GetOlvaAgenciesQuery, List<CachedOlvaAgencyResponse>>
+{
+    public Task<Result<List<CachedOlvaAgencyResponse>>> Handle(GetOlvaAgenciesQuery request, CancellationToken cancellationToken)
+    {
+        var query = olvaAgencies.Query().Where(agency => agency.IsActive).AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(request.Q))
+        {
+            var search = request.Q.Trim().ToLower();
+            query = query.Where(agency =>
+                agency.Code.ToLower().Contains(search) ||
+                agency.Name.ToLower().Contains(search) ||
+                (agency.Address != null && agency.Address.ToLower().Contains(search)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Department))
+        {
+            var department = OlvaLocationNames.Normalize(request.Department);
+            query = query.Where(agency => OlvaLocationNames.Normalize(agency.Department) == department);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Province))
+        {
+            var province = OlvaLocationNames.Normalize(request.Province);
+            query = query.Where(agency => OlvaLocationNames.Normalize(agency.Province) == province);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.District))
+        {
+            var district = OlvaLocationNames.Normalize(request.District);
+            query = query.Where(agency => OlvaLocationNames.Normalize(agency.District) == district);
+        }
+
+        var agencies = query
+            .OrderBy(agency => agency.Department)
+            .ThenBy(agency => agency.Province)
+            .ThenBy(agency => agency.District)
+            .ThenBy(agency => agency.Name)
+            .Take(80)
+            .Select(OlvaAgencyMappings.ToCachedAgencyResponse)
+            .ToList();
+
+        return Task.FromResult(Result.Success(agencies));
+    }
+}
+
+internal sealed class SyncOlvaAgenciesCommandHandler(
+    IOlvaCourierClient olvaCourierClient,
+    IRepository<OlvaAgencyEntity> olvaAgencies,
+    IUnitOfWork unitOfWork)
+    : ICommandHandler<SyncOlvaAgenciesCommand, SyncOlvaAgenciesResponse>
+{
+    public async Task<Result<SyncOlvaAgenciesResponse>> Handle(SyncOlvaAgenciesCommand request, CancellationToken cancellationToken)
+    {
+        var result = await olvaCourierClient.GetAgenciesAsync(request.Q, request.Department, request.Province, request.District, cancellationToken);
+        if (result.IsFailure)
+        {
+            return Result.Failure<SyncOlvaAgenciesResponse>(result.Error);
+        }
+
+        var existingAgencies = olvaAgencies.Query().ToDictionary(agency => agency.Code, StringComparer.OrdinalIgnoreCase);
+        var receivedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var imported = 0;
+        var updated = 0;
+
+        foreach (var agency in result.Value)
+        {
+            var code = agency.Code?.Trim();
+            var name = agency.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            receivedCodes.Add(code);
+            var scheduleJson = agency.Schedule?.GetRawText();
+
+            if (existingAgencies.TryGetValue(code, out var existingAgency))
+            {
+                existingAgency.UpdateFromOlva(
+                    name,
+                    agency.Type,
+                    agency.Department,
+                    agency.Province,
+                    agency.District,
+                    agency.Address,
+                    agency.Phone,
+                    scheduleJson,
+                    agency.Latitude,
+                    agency.Longitude);
+                updated++;
+                continue;
+            }
+
+            olvaAgencies.Add(OlvaAgencyEntity.Create(
+                code,
+                name,
+                agency.Type,
+                agency.Department,
+                agency.Province,
+                agency.District,
+                agency.Address,
+                agency.Phone,
+                scheduleJson,
+                agency.Latitude,
+                agency.Longitude));
+            imported++;
+        }
+
+        var deactivated = 0;
+        if (string.IsNullOrWhiteSpace(request.Q))
+        {
+            var scopedExisting = existingAgencies.Values.Where(agency =>
+                MatchesScope(agency.Department, request.Department) &&
+                MatchesScope(agency.Province, request.Province) &&
+                MatchesScope(agency.District, request.District));
+
+            foreach (var agency in scopedExisting)
+            {
+                if (!receivedCodes.Contains(agency.Code))
+                {
+                    agency.Deactivate();
+                    deactivated++;
+                }
+            }
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Result.Success(new SyncOlvaAgenciesResponse(imported, updated, deactivated));
+    }
+
+    private static bool MatchesScope(string? value, string? scope)
+        => string.IsNullOrWhiteSpace(scope) || string.Equals(value, scope.Trim(), StringComparison.OrdinalIgnoreCase);
+}
+
+internal sealed class GetCachedOlvaDepartmentsQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
+    : IQueryHandler<GetCachedOlvaDepartmentsQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetCachedOlvaDepartmentsQuery request, CancellationToken cancellationToken)
+    {
+        var departments = olvaAgencies.Query()
+            .Where(agency => agency.IsActive && agency.Department != null)
+            .AsEnumerable()
+            .Select(agency => agency.Department!)
+            .Where(OlvaLocationNames.IsValid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name)
+            .ToList();
+
+        return Task.FromResult(Result.Success(departments));
+    }
+}
+
+internal sealed class GetCachedOlvaProvincesQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
+    : IQueryHandler<GetCachedOlvaProvincesQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetCachedOlvaProvincesQuery request, CancellationToken cancellationToken)
+    {
+        var department = OlvaLocationNames.Normalize(request.Department);
+        var provinces = olvaAgencies.Query()
+            .Where(agency => agency.IsActive && agency.Department != null && agency.Province != null)
+            .AsEnumerable()
+            .Where(agency => OlvaLocationNames.Normalize(agency.Department) == department)
+            .Select(agency => agency.Province!)
+            .Where(OlvaLocationNames.IsValid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name)
+            .ToList();
+
+        return Task.FromResult(Result.Success(provinces));
+    }
+}
+
+internal sealed class GetCachedOlvaDistrictsQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
+    : IQueryHandler<GetCachedOlvaDistrictsQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetCachedOlvaDistrictsQuery request, CancellationToken cancellationToken)
+    {
+        var department = OlvaLocationNames.Normalize(request.Department);
+        var province = OlvaLocationNames.Normalize(request.Province);
+        var districts = olvaAgencies.Query()
+            .Where(agency => agency.IsActive && agency.Department != null && agency.Province != null && agency.District != null)
+            .AsEnumerable()
+            .Where(agency => OlvaLocationNames.Normalize(agency.Department) == department && OlvaLocationNames.Normalize(agency.Province) == province)
+            .Select(agency => agency.District!)
+            .Where(OlvaLocationNames.IsValid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name)
+            .ToList();
+
+        return Task.FromResult(Result.Success(districts));
+    }
+}
+
+internal sealed class GetOlvaDepartmentsQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<GetOlvaDepartmentsQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetOlvaDepartmentsQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.GetDepartmentsAsync(cancellationToken);
+    }
+}
+
+internal sealed class GetOlvaProvincesQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<GetOlvaProvincesQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetOlvaProvincesQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.GetProvincesAsync(request.Department, cancellationToken);
+    }
+}
+
+internal sealed class GetOlvaDistrictsQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<GetOlvaDistrictsQuery, List<string>>
+{
+    public Task<Result<List<string>>> Handle(GetOlvaDistrictsQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.GetDistrictsAsync(request.Department, request.Province, cancellationToken);
+    }
+}
+
+internal sealed class QuoteOlvaShipmentQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<QuoteOlvaShipmentQuery, OlvaQuoteResponse>
+{
+    public Task<Result<OlvaQuoteResponse>> Handle(QuoteOlvaShipmentQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.QuoteAsync(
+            new OlvaQuoteRequest(
+                request.Origin,
+                request.Destination,
+                request.DeliveryType,
+                request.ShipmentType,
+                request.Weight,
+                request.PartnerRate),
+            cancellationToken);
+    }
+}
+
+internal sealed class TrackOlvaShipmentQueryHandler(IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<TrackOlvaShipmentQuery, OlvaTrackingResponse>
+{
+    public Task<Result<OlvaTrackingResponse>> Handle(TrackOlvaShipmentQuery request, CancellationToken cancellationToken)
+    {
+        return olvaCourierClient.TrackAsync(request.OrderNumber, request.OrderCode, cancellationToken);
+    }
+}
+
+internal static class OlvaAgencyMappings
+{
+    public static CachedOlvaAgencyResponse ToCachedAgencyResponse(OlvaAgencyEntity agency)
+    {
+        return new CachedOlvaAgencyResponse(
+            agency.Id,
+            agency.Code,
+            agency.Name,
+            agency.Type,
+            agency.Department,
+            agency.Province,
+            agency.District,
+            agency.Address,
+            agency.Phone,
+            agency.ScheduleJson,
+            agency.Latitude,
+            agency.Longitude,
+            agency.LastSyncedAt);
+    }
+}
+
+internal static class OlvaLocationNames
+{
+    public static string Normalize(string? value)
+        => value?.Trim().ToUpperInvariant() ?? string.Empty;
+
+    public static bool IsValid(string? value)
+    {
+        var normalized = value?.Trim();
+        return !string.IsNullOrWhiteSpace(normalized) && !string.Equals(normalized, "string", StringComparison.OrdinalIgnoreCase);
+    }
+}

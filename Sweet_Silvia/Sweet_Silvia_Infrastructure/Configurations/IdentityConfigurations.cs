@@ -37,6 +37,9 @@ internal sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refre
         builder.Property(entity => entity.ExpiresAt).IsRequired();
         builder.Property(entity => entity.RevokedAt);
         builder.Property(entity => entity.DeviceInfo).HasMaxLength(500);
+        builder.Property(entity => entity.IpAddress).HasMaxLength(64);
+        builder.Property(entity => entity.UserAgent).HasMaxLength(500);
+        builder.Property(entity => entity.LastUsedAt);
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Ignore(entity => entity.IsRevoked);
         builder.HasIndex(entity => entity.TokenHash).IsUnique();

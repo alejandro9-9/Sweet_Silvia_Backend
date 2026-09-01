@@ -13,8 +13,26 @@ public sealed record UpdateShippingRateCommand(Guid Id, Guid CourierId, CourierT
 
 public sealed record DeleteShippingRateCommand(Guid Id) : ICommand;
 
-public sealed record CalculateShippingCostQuery(Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, decimal OrderSubtotal, string Currency = "PEN") : IQuery<ShippingCostResponse>;
+public sealed record ShippingPackageItem(int Quantity, decimal? WeightKg, decimal? LengthCm, decimal? WidthCm, decimal? HeightCm);
 
-public sealed record ShippingCostResponse(Guid ShippingRateId, Guid CourierId, decimal Cost, string Currency, string? EstimatedTime);
+public sealed record CalculateShippingCostQuery(
+    Guid DepartmentId,
+    Guid? ProvinceId,
+    Guid? DistrictId,
+    ShippingDestinationType DestinationType,
+    decimal OrderSubtotal,
+    string Currency = "PEN",
+    IReadOnlyList<ShippingPackageItem>? PackageItems = null) : IQuery<ShippingCostResponse>;
+
+public sealed record ShippingCostResponse(
+    Guid ShippingRateId,
+    Guid CourierId,
+    decimal Cost,
+    string Currency,
+    string? EstimatedTime,
+    decimal ChargeableWeightKg,
+    decimal VolumetricWeightKg,
+    decimal ActualWeightKg,
+    decimal VolumeSurcharge);
 
 public sealed record GetShippingRatesQuery(Guid? DepartmentId = null, Guid? ProvinceId = null, Guid? DistrictId = null, ShippingDestinationType? DestinationType = null, bool OnlyActive = true) : IQuery<List<ShippingRateResponse>>;

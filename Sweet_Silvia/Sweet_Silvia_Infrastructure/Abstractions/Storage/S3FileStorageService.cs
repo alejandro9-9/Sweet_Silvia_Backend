@@ -1,0 +1,48 @@
+using Amazon.S3;
+using Amazon.S3.Model;
+using Sweet_Silvia_Application.Abstractions.Storage;
+
+namespace Sweet_Silvia_Infrastructure.Abstractions.Storage;
+
+internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOptions options) : IFileStorageService
+{
+    public async Task<FileStorageResult> SaveAsync(FileStorageUpload upload, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(options.S3BucketName))
+        {
+            throw new InvalidOperationException("FileStorage:S3BucketName is required when FileStorage:Provider is S3.");
+        }
+
+        var extension = Path.GetExtension(upload.OriginalFileName).ToLowerInvariant();
+        var key = $"{NormalizeContainer(upload.Container)}/{Guid.NewGuid():N}{extension}";
+
+        var request = new PutObjectRequest
+        {
+            BucketName = options.S3BucketName,
+            Key = key,
+            InputStream = upload.Content,
+            ContentType = upload.ContentType
+        };
+
+        await s3Client.PutObjectAsync(request, cancellationToken);
+
+        var url = string.IsNullOrWhiteSpace(options.S3PublicBaseUrl)
+            ? $"https://{options.S3BucketName}.s3.{options.S3Region}.amazonaws.com/{key}"
+            : $"{options.S3PublicBaseUrl.TrimEnd('/')}/{key}";
+
+        return new FileStorageResult(url, key);
+    }
+
+    private static string NormalizeContainer(string container)
+    {
+        if (string.IsNullOrWhiteSpace(container))
+        {
+            throw new ArgumentException("Storage container is required.", nameof(container));
+        }
+
+        return string.Join("/", container
+            .Trim()
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries));
+    }
+}

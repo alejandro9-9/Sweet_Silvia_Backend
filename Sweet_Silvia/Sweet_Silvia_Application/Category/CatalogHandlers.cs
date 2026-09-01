@@ -150,11 +150,21 @@ internal sealed class GetCollectionsQueryHandler(IRepository<CollectionEntity> c
     }
 }
 
-internal sealed class CreateProductCommandHandler(IRepository<ProductEntity> products, IUnitOfWork unitOfWork)
+internal sealed class CreateProductCommandHandler(
+    IRepository<ProductEntity> products,
+    IRepository<CategoryEntity> categories,
+    IRepository<CollectionEntity> collections,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<CreateProductCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateProductCommand request, CancellationToken cancellationToken)
     {
+        var validation = CatalogMappings.ValidateProductCatalog(request.CategoryId, request.CollectionId, categories, collections);
+        if (validation.IsFailure)
+        {
+            return Result.Failure<Guid>(validation.Error);
+        }
+
         var product = ProductEntity.Create(
             request.CategoryId,
             request.CollectionId,
@@ -168,7 +178,11 @@ internal sealed class CreateProductCommandHandler(IRepository<ProductEntity> pro
     }
 }
 
-internal sealed class UpdateProductCommandHandler(IRepository<ProductEntity> products, IUnitOfWork unitOfWork)
+internal sealed class UpdateProductCommandHandler(
+    IRepository<ProductEntity> products,
+    IRepository<CategoryEntity> categories,
+    IRepository<CollectionEntity> collections,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<UpdateProductCommand>
 {
     public async Task<Result> Handle(UpdateProductCommand request, CancellationToken cancellationToken)
@@ -177,6 +191,12 @@ internal sealed class UpdateProductCommandHandler(IRepository<ProductEntity> pro
         if (product is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("Product", request.Id));
+        }
+
+        var validation = CatalogMappings.ValidateProductCatalog(request.CategoryId, request.CollectionId, categories, collections);
+        if (validation.IsFailure)
+        {
+            return validation;
         }
 
         product.Update(
@@ -246,11 +266,19 @@ internal sealed class GetProductsQueryHandler(IRepository<ProductEntity> product
     }
 }
 
-internal sealed class CreateProductVariantCommandHandler(IRepository<ProductVariantEntity> variants, IUnitOfWork unitOfWork)
+internal sealed class CreateProductVariantCommandHandler(
+    IRepository<ProductEntity> products,
+    IRepository<ProductVariantEntity> variants,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<CreateProductVariantCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateProductVariantCommand request, CancellationToken cancellationToken)
     {
+        if (!products.Query().Any(product => product.Id == request.ProductId && product.IsActive))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Product", request.ProductId));
+        }
+
         var sku = Sku.Create(request.Sku);
         if (variants.Query().Any(variant => variant.Sku == sku))
         {
@@ -366,11 +394,21 @@ internal sealed class GetProductVariantsByProductQueryHandler(IRepository<Produc
     }
 }
 
-internal sealed class CreateProductImageCommandHandler(IRepository<ProductImageEntity> images, IUnitOfWork unitOfWork)
+internal sealed class CreateProductImageCommandHandler(
+    IRepository<ProductEntity> products,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductImageEntity> images,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<CreateProductImageCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateProductImageCommand request, CancellationToken cancellationToken)
     {
+        var validation = CatalogMappings.ValidateProductImageTarget(request.ProductId, request.ProductVariantId, products, variants);
+        if (validation.IsFailure)
+        {
+            return Result.Failure<Guid>(validation.Error);
+        }
+
         var image = ProductImageEntity.Create(request.ProductId, request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain);
         images.Add(image);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -378,7 +416,10 @@ internal sealed class CreateProductImageCommandHandler(IRepository<ProductImageE
     }
 }
 
-internal sealed class UpdateProductImageCommandHandler(IRepository<ProductImageEntity> images, IUnitOfWork unitOfWork)
+internal sealed class UpdateProductImageCommandHandler(
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductImageEntity> images,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<UpdateProductImageCommand>
 {
     public async Task<Result> Handle(UpdateProductImageCommand request, CancellationToken cancellationToken)
@@ -387,6 +428,15 @@ internal sealed class UpdateProductImageCommandHandler(IRepository<ProductImageE
         if (image is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("ProductImage", request.Id));
+        }
+
+        if (request.ProductVariantId.HasValue &&
+            !variants.Query().Any(variant =>
+                variant.Id == request.ProductVariantId.Value &&
+                variant.ProductId == image.ProductId &&
+                variant.IsActive))
+        {
+            return Result.Failure(ApplicationErrors.Conflict("ProductImage.InvalidVariant", "Product variant does not belong to the image product or is inactive."));
         }
 
         image.Update(request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain);
@@ -429,6 +479,49 @@ internal sealed class GetProductImagesByProductQueryHandler(IRepository<ProductI
 
 internal static class CatalogMappings
 {
+    public static Result ValidateProductCatalog(
+        Guid categoryId,
+        Guid? collectionId,
+        IRepository<CategoryEntity> categories,
+        IRepository<CollectionEntity> collections)
+    {
+        if (!categories.Query().Any(category => category.Id == categoryId && category.IsActive))
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Category", categoryId));
+        }
+
+        if (collectionId.HasValue &&
+            !collections.Query().Any(collection => collection.Id == collectionId.Value && collection.IsActive))
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Collection", collectionId.Value));
+        }
+
+        return Result.Success();
+    }
+
+    public static Result ValidateProductImageTarget(
+        Guid productId,
+        Guid? productVariantId,
+        IRepository<ProductEntity> products,
+        IRepository<ProductVariantEntity> variants)
+    {
+        if (!products.Query().Any(product => product.Id == productId && product.IsActive))
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Product", productId));
+        }
+
+        if (productVariantId.HasValue &&
+            !variants.Query().Any(variant =>
+                variant.Id == productVariantId.Value &&
+                variant.ProductId == productId &&
+                variant.IsActive))
+        {
+            return Result.Failure(ApplicationErrors.Conflict("ProductImage.InvalidVariant", "Product variant does not belong to the selected product or is inactive."));
+        }
+
+        return Result.Success();
+    }
+
     public static ProductResponse ToResponse(ProductEntity product)
     {
         return new ProductResponse(

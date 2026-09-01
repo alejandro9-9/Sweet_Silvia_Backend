@@ -3,8 +3,33 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using ShipmentEntity = Sweet_Silvia_Domain.Shipment.Shipment;
 using ShipmentEventEntity = Sweet_Silvia_Domain.ShipmentEvent.ShipmentEvent;
 using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
+using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
+
+internal sealed class OlvaAgencyConfiguration : IEntityTypeConfiguration<OlvaAgencyEntity>
+{
+    public void Configure(EntityTypeBuilder<OlvaAgencyEntity> builder)
+    {
+        builder.ToTable("OlvaAgencies");
+        builder.HasKey(entity => entity.Id);
+        builder.Property(entity => entity.Code).IsRequired().HasMaxLength(60);
+        builder.Property(entity => entity.Name).IsRequired().HasMaxLength(180);
+        builder.Property(entity => entity.Type).HasMaxLength(80);
+        builder.Property(entity => entity.Department).HasMaxLength(120);
+        builder.Property(entity => entity.Province).HasMaxLength(120);
+        builder.Property(entity => entity.District).HasMaxLength(120);
+        builder.Property(entity => entity.Address).HasMaxLength(300);
+        builder.Property(entity => entity.Phone).HasMaxLength(80);
+        builder.Property(entity => entity.ScheduleJson).HasColumnType("jsonb");
+        builder.Property(entity => entity.Latitude);
+        builder.Property(entity => entity.Longitude);
+        builder.Property(entity => entity.IsActive).IsRequired();
+        builder.Property(entity => entity.LastSyncedAt).IsRequired();
+        builder.HasIndex(entity => entity.Code).IsUnique();
+        builder.HasIndex(entity => new { entity.Department, entity.Province, entity.District, entity.IsActive });
+    }
+}
 
 internal sealed class ShippingRateConfiguration : IEntityTypeConfiguration<ShippingRateEntity>
 {

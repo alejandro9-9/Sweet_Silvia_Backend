@@ -1,3 +1,5 @@
+using Amazon;
+using Amazon.S3;
 using System.Net.Mail;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -5,13 +7,19 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using Sweet_Silvia_Application.Abstractions.Audit;
 using Sweet_Silvia_Application.Abstractions.Email;
 using Sweet_Silvia_Application.Abstractions.Security;
+using Sweet_Silvia_Application.Abstractions.Shipping;
+using Sweet_Silvia_Application.Abstractions.Storage;
 using Sweet_Silvia_Application.Abstractions.Time;
 using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.RefreshToken;
+using Sweet_Silvia_Infrastructure.Abstractions.Audit;
 using Sweet_Silvia_Infrastructure.Abstractions.Email;
 using Sweet_Silvia_Infrastructure.Abstractions.Security;
+using Sweet_Silvia_Infrastructure.Abstractions.Shipping;
+using Sweet_Silvia_Infrastructure.Abstractions.Storage;
 using Sweet_Silvia_Infrastructure.Abstractions.Time;
 using Sweet_Silvia_Infrastructure.Repositories;
 
@@ -28,6 +36,8 @@ public static class DependencyInjection
         var refreshTokenOptions = configuration.GetSection("RefreshToken").Get<RefreshTokenOptions>() ?? new RefreshTokenOptions();
         var emailVerificationOptions = configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions();
         var emailDeliveryOptions = configuration.GetSection("Email").Get<EmailDeliveryOptions>() ?? new EmailDeliveryOptions();
+        var olvaOptions = configuration.GetSection("Olva").Get<OlvaOptions>() ?? new OlvaOptions();
+        var fileStorageOptions = configuration.GetSection("FileStorage").Get<FileStorageOptions>() ?? new FileStorageOptions();
 
         ValidateJwt(jwtOptions);
         ValidateRefreshToken(refreshTokenOptions);
@@ -46,15 +56,42 @@ public static class DependencyInjection
         services.AddSingleton(refreshTokenOptions);
         services.AddSingleton(emailVerificationOptions);
         services.AddSingleton(emailDeliveryOptions);
+        services.AddSingleton(olvaOptions);
+        services.AddSingleton(fileStorageOptions);
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddSingleton<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
+        services.AddScoped<IAuditLogWriter, AuditLogWriter>();
         services.AddSingleton<IVerificationCodeGenerator, VerificationCodeGenerator>();
 
         RegisterEmailSender(services, emailDeliveryOptions);
+        RegisterOlvaCourierClient(services, olvaOptions);
+        RegisterFileStorage(services, fileStorageOptions);
         RegisterAuthentication(services, jwtOptions);
 
         return services;
+    }
+
+    private static void RegisterFileStorage(IServiceCollection services, FileStorageOptions options)
+    {
+        if (string.Equals(options.Provider, "S3", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client(RegionEndpoint.GetBySystemName(options.S3Region)));
+            services.AddScoped<IFileStorageService, S3FileStorageService>();
+            return;
+        }
+
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
+    }
+
+    private static void RegisterOlvaCourierClient(IServiceCollection services, OlvaOptions options)
+    {
+        services.AddHttpClient<IOlvaCourierClient, OlvaCourierClient>(client =>
+        {
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(20);
+            client.DefaultRequestHeaders.Add("x-api-key", options.ApiKey);
+        });
     }
 
     private static void RegisterEmailSender(IServiceCollection services, EmailDeliveryOptions options)

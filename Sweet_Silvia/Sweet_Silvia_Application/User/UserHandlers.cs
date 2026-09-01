@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Sweet_Silvia_Application.Abstractions.Audit;
 using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Abstractions.Security;
 using Sweet_Silvia_Application.Common;
@@ -123,6 +124,7 @@ internal sealed class LoginCommandHandler(
     IJwtTokenGenerator jwtTokenGenerator,
     IPasswordHasher passwordHasher,
     IRefreshTokenRepository refreshTokens,
+    IAuditLogWriter auditLogWriter,
     IUnitOfWork unitOfWork)
     : ICommandHandler<LoginCommand, LoginResponse>
 {
@@ -150,9 +152,23 @@ internal sealed class LoginCommandHandler(
             refreshToken.TokenHash,
             refreshToken.ExpiresAt,
             request.DeviceInfo,
+            request.IpAddress,
+            request.UserAgent,
             now));
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await auditLogWriter.WriteAsync(
+            user.Id,
+            role.Name,
+            "User.Login",
+            "User",
+            user.Id,
+            request.IpAddress,
+            request.UserAgent,
+            null,
+            new { user.Email.Value, request.DeviceInfo },
+            null,
+            cancellationToken);
 
         var token = jwtTokenGenerator.GenerateToken(CreateClaims(user, role));
         return new LoginResponse(token, refreshToken.Token, refreshToken.ExpiresAt);
@@ -176,6 +192,7 @@ internal sealed class RefreshSessionCommandHandler(
     IRefreshTokenRepository refreshTokens,
     IRefreshTokenService refreshTokenService,
     IJwtTokenGenerator jwtTokenGenerator,
+    IAuditLogWriter auditLogWriter,
     IUnitOfWork unitOfWork)
     : ICommandHandler<RefreshSessionCommand, LoginResponse>
 {
@@ -202,6 +219,7 @@ internal sealed class RefreshSessionCommandHandler(
             return Result.Failure<LoginResponse>(ApplicationErrors.Conflict("Role.Invalid", "The user role is invalid."));
         }
 
+        token.MarkUsed(now, request.IpAddress, request.UserAgent);
         token.Revoke(now);
         var nextRefreshToken = refreshTokenService.Generate(now);
         refreshTokens.Add(RefreshTokenEntity.Create(
@@ -209,9 +227,23 @@ internal sealed class RefreshSessionCommandHandler(
             nextRefreshToken.TokenHash,
             nextRefreshToken.ExpiresAt,
             request.DeviceInfo,
+            request.IpAddress,
+            request.UserAgent,
             now));
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await auditLogWriter.WriteAsync(
+            user.Id,
+            role.Name,
+            "User.SessionRefreshed",
+            "RefreshToken",
+            token.Id,
+            request.IpAddress,
+            request.UserAgent,
+            null,
+            new { request.DeviceInfo },
+            null,
+            cancellationToken);
 
         var accessToken = jwtTokenGenerator.GenerateToken(LoginCommandHandler.CreateClaims(user, role));
         return new LoginResponse(accessToken, nextRefreshToken.Token, nextRefreshToken.ExpiresAt);
@@ -221,6 +253,7 @@ internal sealed class RefreshSessionCommandHandler(
 internal sealed class RevokeSessionCommandHandler(
     IRefreshTokenRepository refreshTokens,
     IRefreshTokenService refreshTokenService,
+    IAuditLogWriter auditLogWriter,
     IUnitOfWork unitOfWork)
     : ICommandHandler<RevokeSessionCommand>
 {
@@ -231,6 +264,18 @@ internal sealed class RevokeSessionCommandHandler(
         {
             token.Revoke(DateTimeOffset.UtcNow);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await auditLogWriter.WriteAsync(
+                token.UserId,
+                null,
+                "User.Logout",
+                "RefreshToken",
+                token.Id,
+                request.IpAddress,
+                request.UserAgent,
+                null,
+                null,
+                null,
+                cancellationToken);
         }
 
         return Result.Success();
@@ -249,6 +294,9 @@ internal sealed class GetRefreshTokensByUserQueryHandler(IRefreshTokenRepository
             token.ExpiresAt,
             token.RevokedAt,
             token.DeviceInfo,
+            token.IpAddress,
+            token.UserAgent,
+            token.LastUsedAt,
             token.CreatedAt)).ToList();
     }
 }

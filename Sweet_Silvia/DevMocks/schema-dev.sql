@@ -174,6 +174,29 @@ END $EF$;
 
 DO $EF$
 BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260901060716_AddOlvaAgencyCache') THEN
+    CREATE TABLE "OlvaAgencies" (
+        "Id" uuid NOT NULL,
+        "Code" character varying(60) NOT NULL,
+        "Name" character varying(180) NOT NULL,
+        "Type" character varying(80),
+        "Department" character varying(120),
+        "Province" character varying(120),
+        "District" character varying(120),
+        "Address" character varying(300),
+        "Phone" character varying(80),
+        "ScheduleJson" jsonb,
+        "Latitude" double precision,
+        "Longitude" double precision,
+        "IsActive" boolean NOT NULL,
+        "LastSyncedAt" timestamp with time zone NOT NULL,
+        CONSTRAINT "PK_OlvaAgencies" PRIMARY KEY ("Id")
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
     IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831200509_InitialCreate') THEN
     CREATE TABLE "Departments" (
         "Id" uuid NOT NULL,
@@ -658,6 +681,20 @@ END $EF$;
 
 DO $EF$
 BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260901060716_AddOlvaAgencyCache') THEN
+    CREATE UNIQUE INDEX "IX_OlvaAgencies_Code" ON "OlvaAgencies" ("Code");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260901060716_AddOlvaAgencyCache') THEN
+    CREATE INDEX "IX_OlvaAgencies_Department_Province_District_IsActive" ON "OlvaAgencies" ("Department", "Province", "District", "IsActive");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
     IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831200509_InitialCreate') THEN
     CREATE INDEX "IX_Orders_AddressId" ON "Orders" ("AddressId");
     END IF;
@@ -885,6 +922,80 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831200509_InitialCreate') THEN
     INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
     VALUES ('20260831200509_InitialCreate', '10.0.11');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    ALTER TABLE "RefreshTokens" ADD "IpAddress" character varying(64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    ALTER TABLE "RefreshTokens" ADD "LastUsedAt" timestamp with time zone;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    ALTER TABLE "RefreshTokens" ADD "UserAgent" character varying(500);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    CREATE TABLE "AuditLogs" (
+        "Id" uuid NOT NULL,
+        "ActorUserId" uuid,
+        "ActorRole" character varying(80),
+        "Action" character varying(120) NOT NULL,
+        "EntityName" character varying(120) NOT NULL,
+        "EntityId" uuid,
+        "OccurredAt" timestamp with time zone NOT NULL,
+        "IpAddress" character varying(64),
+        "UserAgent" character varying(500),
+        "OldValuesJson" jsonb,
+        "NewValuesJson" jsonb,
+        "Observation" character varying(500),
+        CONSTRAINT "PK_AuditLogs" PRIMARY KEY ("Id")
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    CREATE INDEX "IX_AuditLogs_ActorUserId" ON "AuditLogs" ("ActorUserId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    CREATE INDEX "IX_AuditLogs_EntityName_EntityId" ON "AuditLogs" ("EntityName", "EntityId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    CREATE INDEX "IX_AuditLogs_OccurredAt" ON "AuditLogs" ("OccurredAt");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20260831210627_AddAuditLogsAndSessionMetadata') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20260831210627_AddAuditLogsAndSessionMetadata', '10.0.11');
     END IF;
 END $EF$;
 COMMIT;

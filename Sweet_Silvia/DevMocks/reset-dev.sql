@@ -1,5 +1,11 @@
 BEGIN;
 
+DELETE FROM "AuditLogs" WHERE "Id" IN (
+'ac000000-0000-0000-0000-000000000001',
+'ac000000-0000-0000-0000-000000000002',
+'ac000000-0000-0000-0000-000000000003',
+'ac000000-0000-0000-0000-000000000004'
+);
 DELETE FROM "PaymentReviews" WHERE "Id" IN ('c1000000-0000-0000-0000-000000000001');
 DELETE FROM "PaymentReceipts" WHERE "PaymentId" IN ('c0000000-0000-0000-0000-000000000001');
 DELETE FROM "Payments" WHERE "Id" IN ('c0000000-0000-0000-0000-000000000001');
@@ -28,6 +34,7 @@ DELETE FROM "Couriers" WHERE "Id" IN (
 '70000000-0000-0000-0000-000000000003',
 '70000000-0000-0000-0000-000000000004'
 );
+DELETE FROM "OlvaAgencies" WHERE "Id"::text LIKE '81000000-0000-0000-0000-000000000%';
 DELETE FROM "PaymentMethods" WHERE "Id" IN (
 '60000000-0000-0000-0000-000000000001',
 '60000000-0000-0000-0000-000000000002',
@@ -65,23 +72,9 @@ DELETE FROM "Categories" WHERE "Id" IN (
 '10000000-0000-0000-0000-000000000004'
 );
 DELETE FROM "Addresses" WHERE "UserId" IN ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3');
-DELETE FROM "Districts" WHERE "Id" IN (
-'dddddddd-dddd-dddd-dddd-ddddddddd001',
-'dddddddd-dddd-dddd-dddd-ddddddddd002',
-'dddddddd-dddd-dddd-dddd-ddddddddd003',
-'dddddddd-dddd-dddd-dddd-ddddddddd004',
-'dddddddd-dddd-dddd-dddd-ddddddddd005'
-);
-DELETE FROM "Provinces" WHERE "Id" IN (
-'cccccccc-cccc-cccc-cccc-ccccccccc001',
-'cccccccc-cccc-cccc-cccc-ccccccccc002',
-'cccccccc-cccc-cccc-cccc-ccccccccc003'
-);
-DELETE FROM "Departments" WHERE "Id" IN (
-'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb001',
-'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb002',
-'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb003'
-);
+DELETE FROM "Districts" WHERE "Id"::text LIKE 'dddddddd-dddd-dddd-dddd-ddddddddd%';
+DELETE FROM "Provinces" WHERE "Id"::text LIKE 'cccccccc-cccc-cccc-cccc-ccccccccc%';
+DELETE FROM "Departments" WHERE "Id"::text LIKE 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb%';
 DELETE FROM "RefreshTokens" WHERE "UserId" IN (
 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',

@@ -18,7 +18,7 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
         var result = await sender.Send(
-            new LoginCommand(request.Email, request.Password, Request.Headers.UserAgent.ToString()),
+            new LoginCommand(request.Email, request.Password, Request.Headers.UserAgent.ToString(), GetIpAddress(), Request.Headers.UserAgent.ToString()),
             cancellationToken);
 
         if (result.IsFailure)
@@ -41,7 +41,7 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
         }
 
         var result = await sender.Send(
-            new RefreshSessionCommand(refreshToken, Request.Headers.UserAgent.ToString()),
+            new RefreshSessionCommand(refreshToken, Request.Headers.UserAgent.ToString(), GetIpAddress(), Request.Headers.UserAgent.ToString()),
             cancellationToken);
 
         if (result.IsFailure)
@@ -61,7 +61,7 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
         if (Request.Cookies.TryGetValue(RefreshTokenCookieName, out var refreshToken) &&
             !string.IsNullOrWhiteSpace(refreshToken))
         {
-            await sender.Send(new RevokeSessionCommand(refreshToken), cancellationToken);
+            await sender.Send(new RevokeSessionCommand(refreshToken, GetIpAddress(), Request.Headers.UserAgent.ToString()), cancellationToken);
         }
 
         DeleteRefreshTokenCookie();
@@ -91,6 +91,17 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
             IsEssential = true,
             Path = "/api/auth"
         };
+    }
+
+    private string? GetIpAddress()
+    {
+        var forwardedFor = Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedFor))
+        {
+            return forwardedFor.Split(',')[0].Trim();
+        }
+
+        return HttpContext.Connection.RemoteIpAddress?.ToString();
     }
 }
 

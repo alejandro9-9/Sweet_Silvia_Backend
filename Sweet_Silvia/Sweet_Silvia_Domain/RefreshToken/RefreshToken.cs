@@ -12,6 +12,8 @@ public sealed class RefreshToken : Entity
         string tokenHash,
         DateTimeOffset expiresAt,
         string? deviceInfo,
+        string? ipAddress,
+        string? userAgent,
         DateTimeOffset createdAt)
         : base(id)
     {
@@ -19,6 +21,8 @@ public sealed class RefreshToken : Entity
         TokenHash = tokenHash;
         ExpiresAt = expiresAt;
         DeviceInfo = deviceInfo;
+        IpAddress = ipAddress;
+        UserAgent = userAgent;
         CreatedAt = createdAt;
     }
 
@@ -27,6 +31,9 @@ public sealed class RefreshToken : Entity
     public DateTimeOffset ExpiresAt { get; private set; }
     public DateTimeOffset? RevokedAt { get; private set; }
     public string? DeviceInfo { get; private set; }
+    public string? IpAddress { get; private set; }
+    public string? UserAgent { get; private set; }
+    public DateTimeOffset? LastUsedAt { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
 
     public bool IsRevoked => RevokedAt.HasValue;
@@ -36,6 +43,8 @@ public sealed class RefreshToken : Entity
         string tokenHash,
         DateTimeOffset expiresAt,
         string? deviceInfo,
+        string? ipAddress,
+        string? userAgent,
         DateTimeOffset createdAt)
     {
         if (userId == Guid.Empty)
@@ -59,6 +68,8 @@ public sealed class RefreshToken : Entity
             tokenHash.Trim(),
             expiresAt,
             NormalizeDeviceInfo(deviceInfo),
+            NormalizeNetworkValue(ipAddress, 64),
+            NormalizeNetworkValue(userAgent, 500),
             createdAt);
 
         token.AddDomainEvent(new RefreshTokenCreatedEvent(token.Id));
@@ -68,6 +79,18 @@ public sealed class RefreshToken : Entity
     public bool IsExpired(DateTimeOffset currentDate) => currentDate >= ExpiresAt;
 
     public bool IsValid(DateTimeOffset currentDate) => !IsRevoked && !IsExpired(currentDate);
+
+    public void MarkUsed(DateTimeOffset usedAt, string? ipAddress, string? userAgent)
+    {
+        if (usedAt < CreatedAt)
+        {
+            throw new ArgumentOutOfRangeException(nameof(usedAt));
+        }
+
+        LastUsedAt = usedAt;
+        IpAddress = NormalizeNetworkValue(ipAddress, 64) ?? IpAddress;
+        UserAgent = NormalizeNetworkValue(userAgent, 500) ?? UserAgent;
+    }
 
     public void Revoke(DateTimeOffset revokedAt)
     {
@@ -94,5 +117,16 @@ public sealed class RefreshToken : Entity
 
         var normalized = deviceInfo.Trim();
         return normalized[..Math.Min(normalized.Length, 500)];
+    }
+
+    private static string? NormalizeNetworkValue(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim();
+        return normalized[..Math.Min(normalized.Length, maxLength)];
     }
 }

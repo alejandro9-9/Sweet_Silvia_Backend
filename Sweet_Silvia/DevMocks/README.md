@@ -16,6 +16,18 @@ DevMocks/
 | Asistente | asistente@sweetsilvia.local | Asistente123* |
 | Cliente | cliente@sweetsilvia.local | Cliente123* |
 
+## Auditoria y sesiones
+
+El seed incluye refresh tokens mock con `IpAddress`, `UserAgent` y `LastUsedAt`, ademas de movimientos de auditoria para probar:
+
+- `GET /api/users/me/refresh-tokens`
+- `GET /api/users/{id}/refresh-tokens`
+- `GET /api/audit-logs`
+
+## Ubigeo de prueba
+
+El seed incluye 25 departamentos, 38 provincias y 52 distritos. Para Lima se agregaron varias provincias y distritos comunes, suficiente para probar combos dependientes y calculo de envios locales/provincia.
+
 ## Ejecutar seed
 
 Desde la raiz de la solucion:

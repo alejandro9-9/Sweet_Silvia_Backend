@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
+using Sweet_Silvia_Application.Abstractions.Storage;
 using Sweet_Silvia_Application.Category;
 using Sweet_Silvia_Application.Collection;
 using Sweet_Silvia_Application.Product;
@@ -133,8 +134,18 @@ public sealed class ProductVariantsController(ISender sender) : ControllerBase
 
 [ApiController]
 [Route("api/product-images")]
-public sealed class ProductImagesController(ISender sender) : ControllerBase
+public sealed class ProductImagesController(ISender sender, IFileStorageService fileStorage) : ControllerBase
 {
+    private const long MaximumImageSizeBytes = 5 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    };
+
     [AllowAnonymous]
     [HttpGet("product/{productId:guid}")]
     public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken)
@@ -146,6 +157,71 @@ public sealed class ProductImagesController(ISender sender) : ControllerBase
         => this.ToCreatedResult(await sender.Send(new CreateProductImageCommand(request.ProductId, request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
+    [HttpPost("upload")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumImageSizeBytes)]
+    public async Task<IActionResult> Upload([FromForm] UploadProductImageFileRequest request, CancellationToken cancellationToken)
+    {
+        var validationError = ValidateFile(request.File, AllowedImageExtensions, MaximumImageSizeBytes);
+        if (validationError is not null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        var product = await sender.Send(new GetProductByIdQuery(request.ProductId), cancellationToken);
+        if (product.IsFailure)
+        {
+            return this.ToActionResult(product);
+        }
+
+        if (!product.Value.IsActive)
+        {
+            return BadRequest(new { error = "Product is inactive." });
+        }
+
+        if (request.ProductVariantId.HasValue)
+        {
+            var variant = await sender.Send(new GetProductVariantByIdQuery(request.ProductVariantId.Value), cancellationToken);
+            if (variant.IsFailure)
+            {
+                return this.ToActionResult(variant);
+            }
+
+            if (variant.Value.ProductId != request.ProductId)
+            {
+                return BadRequest(new { error = "Product variant does not belong to the selected product." });
+            }
+
+            if (!variant.Value.IsActive)
+            {
+                return BadRequest(new { error = "Product variant is inactive." });
+            }
+        }
+
+        var storedFile = await fileStorage.SaveAsync(
+            new FileStorageUpload(
+                "products",
+                request.File.FileName,
+                request.File.ContentType,
+                request.File.OpenReadStream()),
+            cancellationToken);
+
+        var result = await sender.Send(
+            new CreateProductImageCommand(
+                request.ProductId,
+                request.ProductVariantId,
+                storedFile.Url,
+                request.AltText,
+                request.Order,
+                request.IsMain),
+            cancellationToken);
+
+        return result.IsSuccess
+            ? Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key })
+            : BadRequest(result.Error);
+    }
+
+    [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, UpdateProductImageRequest request, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new UpdateProductImageCommand(id, request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain), cancellationToken));
@@ -154,6 +230,24 @@ public sealed class ProductImagesController(ISender sender) : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new DeleteProductImageCommand(id), cancellationToken));
+
+    private static string? ValidateFile(IFormFile file, HashSet<string> allowedExtensions, long maximumSizeBytes)
+    {
+        if (file is null || file.Length == 0)
+        {
+            return "File is required.";
+        }
+
+        if (file.Length > maximumSizeBytes)
+        {
+            return $"File should not exceed {maximumSizeBytes / 1024 / 1024} MB.";
+        }
+
+        var extension = Path.GetExtension(file.FileName);
+        return allowedExtensions.Contains(extension)
+            ? null
+            : $"File extension '{extension}' is not allowed.";
+    }
 }
 
 public sealed record CreateCategoryRequest(string Name, string Description);
@@ -166,3 +260,13 @@ public sealed record CreateProductVariantRequest(Guid ProductId, string Size, st
 public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN");
 public sealed record CreateProductImageRequest(Guid ProductId, Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
 public sealed record UpdateProductImageRequest(Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
+
+public sealed class UploadProductImageFileRequest
+{
+    public Guid ProductId { get; init; }
+    public Guid? ProductVariantId { get; init; }
+    public string? AltText { get; init; }
+    public int Order { get; init; }
+    public bool IsMain { get; init; }
+    public IFormFile File { get; init; } = null!;
+}

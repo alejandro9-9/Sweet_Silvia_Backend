@@ -214,6 +214,8 @@ internal sealed class CalculateShippingCostQueryHandler(
         }
 
         var rate = rates.Query()
+            .Where(rate => rate.IsActive)
+            .AsEnumerable()
             .Where(rate => rate.AppliesTo(request.DepartmentId, request.ProvinceId, request.DistrictId, request.DestinationType))
             .OrderByDescending(rate => rate.DistrictId.HasValue)
             .ThenByDescending(rate => rate.ProvinceId.HasValue)
@@ -224,8 +226,20 @@ internal sealed class CalculateShippingCostQueryHandler(
             return Task.FromResult(Result.Failure<ShippingCostResponse>(ApplicationErrors.NotFound("ShippingRate")));
         }
 
-        var cost = rate.CalculateCost(Money.Create(request.OrderSubtotal, request.Currency));
-        return Task.FromResult(Result.Success(new ShippingCostResponse(rate.Id, rate.CourierId, cost.Amount, cost.Currency, rate.EstimatedTime)));
+        var baseCost = rate.CalculateCost(Money.Create(request.OrderSubtotal, request.Currency));
+        var volumePricing = ShippingVolumeCalculator.Calculate(request.DestinationType, request.PackageItems);
+        var finalCost = Money.Create(baseCost.Amount + volumePricing.Surcharge, baseCost.Currency);
+
+        return Task.FromResult(Result.Success(new ShippingCostResponse(
+            rate.Id,
+            rate.CourierId,
+            finalCost.Amount,
+            finalCost.Currency,
+            rate.EstimatedTime,
+            volumePricing.ChargeableWeightKg,
+            volumePricing.VolumetricWeightKg,
+            volumePricing.ActualWeightKg,
+            volumePricing.Surcharge)));
     }
 }
 
@@ -261,6 +275,49 @@ internal sealed class GetShippingRatesQueryHandler(IRepository<ShippingRateEntit
         }
 
         return Task.FromResult(Result.Success(query.Select(ShippingMappings.ToRateResponse).ToList()));
+    }
+}
+
+internal sealed record ShippingVolumePricing(decimal ActualWeightKg, decimal VolumetricWeightKg, decimal ChargeableWeightKg, decimal Surcharge);
+
+internal static class ShippingVolumeCalculator
+{
+    private const decimal VolumetricFactorCm3 = 6000m;
+    private const decimal DefaultItemWeightKg = 0.3m;
+    private const decimal DefaultItemLengthCm = 30m;
+    private const decimal DefaultItemWidthCm = 22m;
+    private const decimal DefaultItemHeightCm = 4m;
+
+    public static ShippingVolumePricing Calculate(ShippingDestinationType destinationType, IReadOnlyList<ShippingPackageItem>? items)
+    {
+        var packageItems = items is { Count: > 0 }
+            ? items.Where(item => item.Quantity > 0).ToList()
+            : [new ShippingPackageItem(1, DefaultItemWeightKg, DefaultItemLengthCm, DefaultItemWidthCm, DefaultItemHeightCm)];
+
+        var actualWeightKg = packageItems.Sum(item => Math.Max(item.WeightKg ?? DefaultItemWeightKg, DefaultItemWeightKg) * item.Quantity);
+        var volumeCm3 = packageItems.Sum(item => GetVolumeCm3(item) * item.Quantity);
+        var volumetricWeightKg = volumeCm3 / VolumetricFactorCm3;
+        var chargeableWeightKg = Math.Max(actualWeightKg, volumetricWeightKg);
+
+        var includedWeightKg = destinationType == ShippingDestinationType.Lima ? 3m : 1m;
+        var extraKgRate = destinationType == ShippingDestinationType.Lima ? 2m : 4m;
+        var extraWeightKg = Math.Max(0, chargeableWeightKg - includedWeightKg);
+        var weightSurcharge = Math.Ceiling(extraWeightKg) * extraKgRate;
+        var bulkySurcharge = volumeCm3 > 45000m ? 8m : 0m;
+
+        return new ShippingVolumePricing(
+            decimal.Round(actualWeightKg, 2),
+            decimal.Round(volumetricWeightKg, 2),
+            decimal.Round(chargeableWeightKg, 2),
+            weightSurcharge + bulkySurcharge);
+    }
+
+    private static decimal GetVolumeCm3(ShippingPackageItem item)
+    {
+        var length = Math.Max(item.LengthCm ?? DefaultItemLengthCm, 1m);
+        var width = Math.Max(item.WidthCm ?? DefaultItemWidthCm, 1m);
+        var height = Math.Max(item.HeightCm ?? DefaultItemHeightCm, 1m);
+        return length * width * height;
     }
 }
 

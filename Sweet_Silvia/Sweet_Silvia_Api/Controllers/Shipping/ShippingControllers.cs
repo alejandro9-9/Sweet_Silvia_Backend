@@ -68,7 +68,14 @@ public sealed class ShippingRatesController(ISender sender) : ControllerBase
     [Authorize(Roles = ApiRoles.AnyAuthenticated)]
     [HttpPost("calculate")]
     public async Task<IActionResult> Calculate(CalculateShippingCostRequest request, CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new CalculateShippingCostQuery(request.DepartmentId, request.ProvinceId, request.DistrictId, request.DestinationType, request.OrderSubtotal, request.Currency), cancellationToken));
+        => this.ToActionResult(await sender.Send(new CalculateShippingCostQuery(
+            request.DepartmentId,
+            request.ProvinceId,
+            request.DistrictId,
+            request.DestinationType,
+            request.OrderSubtotal,
+            request.Currency,
+            request.PackageItems?.Select(item => new ShippingPackageItem(item.Quantity, item.WeightKg, item.LengthCm, item.WidthCm, item.HeightCm)).ToList()), cancellationToken));
 
     [Authorize(Roles = ApiRoles.Administrator)]
     [HttpPost]
@@ -193,7 +200,15 @@ public sealed class ShipmentEventsController(ISender sender) : ControllerBase
 
 public sealed record CreateCourierRequest(string Name, CourierType Type, bool RequiresExternalIntegration);
 public sealed record UpdateCourierRequest(string Name, CourierType Type, bool RequiresExternalIntegration);
-public sealed record CalculateShippingCostRequest(Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, decimal OrderSubtotal, string Currency = "PEN");
+public sealed record CalculateShippingPackageItemRequest(int Quantity, decimal? WeightKg = null, decimal? LengthCm = null, decimal? WidthCm = null, decimal? HeightCm = null);
+public sealed record CalculateShippingCostRequest(
+    Guid DepartmentId,
+    Guid? ProvinceId,
+    Guid? DistrictId,
+    ShippingDestinationType DestinationType,
+    decimal OrderSubtotal,
+    string Currency = "PEN",
+    IReadOnlyList<CalculateShippingPackageItemRequest>? PackageItems = null);
 public sealed record CreateShippingRateRequest(Guid CourierId, CourierType CourierType, Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, ShippingServiceType ServiceType, decimal Cost, string Currency = "PEN", decimal? FreeShippingMinimumAmount = null, string? EstimatedTime = null);
 public sealed record UpdateShippingRateRequest(Guid CourierId, CourierType CourierType, Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, ShippingServiceType ServiceType, decimal Cost, string Currency = "PEN", decimal? FreeShippingMinimumAmount = null, string? EstimatedTime = null);
 public sealed record CreateShipmentRequest(Guid OrderId, Guid CourierId, decimal ShippingCost, string Currency = "PEN");

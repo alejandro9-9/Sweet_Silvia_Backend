@@ -75,6 +75,7 @@ if (app.Environment.IsDevelopment())
 
 await app.ApplyMigrationsAsync();
 app.UseCors("defaultCorsPolicy");
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

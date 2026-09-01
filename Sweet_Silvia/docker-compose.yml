@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Sweet_Silvia_Api/Dockerfile
     container_name: sweet-silvia-api
+    env_file:
+      - .env
     ports:
       - "8080:8080"
     environment:
@@ -12,10 +14,11 @@ services:
       ConnectionStrings__SweetSilviaDatabase: Host=sweet-silvia-db;Port=5432;Database=sweet_silvia;Username=postgres;Password=postgres
       Jwt__Issuer: SweetSilvia
       Jwt__Audience: SweetSilvia
-      Jwt__SecretKey: CHANGE_ME_SUPER_SECRET_KEY_WITH_32_BYTES
       Jwt__ExpirationMinutes: 30
       RefreshToken__ExpirationDays: 30
-      Email__Provider: Log
+      FileStorage__Provider: Local
+      FileStorage__LocalRootPath: wwwroot/uploads
+      FileStorage__PublicBaseUrl: http://localhost:8080
       Roles__CustomerRoleId: 11111111-1111-1111-1111-111111111111
       Cors__AllowedOrigins__0: http://localhost:3000
       Cors__AllowedOrigins__1: http://localhost:5173

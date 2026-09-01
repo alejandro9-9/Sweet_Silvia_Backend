@@ -7,6 +7,7 @@ namespace Sweet_Silvia_Infrastructure;
 public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
     : DbContext(options), IUnitOfWork
 {
+    public DbSet<Sweet_Silvia_Domain.AuditLog.AuditLog> AuditLogs => Set<Sweet_Silvia_Domain.AuditLog.AuditLog>();
     public DbSet<Sweet_Silvia_Domain.Address.Address> Addresses => Set<Sweet_Silvia_Domain.Address.Address>();
     public DbSet<Sweet_Silvia_Domain.Cart.Cart> Carts => Set<Sweet_Silvia_Domain.Cart.Cart>();
     public DbSet<Sweet_Silvia_Domain.CartAppliedCoupon.CartAppliedCoupon> CartAppliedCoupons => Set<Sweet_Silvia_Domain.CartAppliedCoupon.CartAppliedCoupon>();
@@ -22,6 +23,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<Sweet_Silvia_Domain.Order.Order> Orders => Set<Sweet_Silvia_Domain.Order.Order>();
     public DbSet<Sweet_Silvia_Domain.OrderItem.OrderItem> OrderItems => Set<Sweet_Silvia_Domain.OrderItem.OrderItem>();
     public DbSet<Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory> OrderStatusHistories => Set<Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory>();
+    public DbSet<Sweet_Silvia_Domain.OlvaAgency.OlvaAgency> OlvaAgencies => Set<Sweet_Silvia_Domain.OlvaAgency.OlvaAgency>();
     public DbSet<Sweet_Silvia_Domain.Payment.Payment> Payments => Set<Sweet_Silvia_Domain.Payment.Payment>();
     public DbSet<Sweet_Silvia_Domain.PaymentMethod.PaymentMethod> PaymentMethods => Set<Sweet_Silvia_Domain.PaymentMethod.PaymentMethod>();
     public DbSet<Sweet_Silvia_Domain.PaymentReceipt.PaymentReceipt> PaymentReceipts => Set<Sweet_Silvia_Domain.PaymentReceipt.PaymentReceipt>();

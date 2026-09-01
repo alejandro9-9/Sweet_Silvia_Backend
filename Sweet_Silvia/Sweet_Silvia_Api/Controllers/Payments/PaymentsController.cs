@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
+using Sweet_Silvia_Application.Abstractions.Storage;
 using Sweet_Silvia_Application.Order;
 using Sweet_Silvia_Application.Payment;
 using Sweet_Silvia_Application.PaymentMethod;
@@ -111,8 +112,19 @@ public sealed class PaymentsController(ISender sender) : ControllerBase
 
 [ApiController]
 [Route("api/payment-receipts")]
-public sealed class PaymentReceiptsController(ISender sender) : ControllerBase
+public sealed class PaymentReceiptsController(ISender sender, IFileStorageService fileStorage) : ControllerBase
 {
+    private const long MaximumReceiptSizeBytes = 10 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedReceiptExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".pdf"
+    };
+
     [Authorize(Roles = ApiRoles.Customer)]
     [HttpPost]
     public async Task<IActionResult> Upload(UploadPaymentReceiptRequest request, CancellationToken cancellationToken)
@@ -135,6 +147,57 @@ public sealed class PaymentReceiptsController(ISender sender) : ControllerBase
         }
 
         return this.ToCreatedResult(await sender.Send(new UploadPaymentReceiptCommand(request.PaymentId, request.FileUrl, request.OperationCode, request.DeclaredAmount, request.Currency), cancellationToken));
+    }
+
+    [Authorize(Roles = ApiRoles.Customer)]
+    [HttpPost("upload-file")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumReceiptSizeBytes)]
+    public async Task<IActionResult> UploadFile([FromForm] UploadPaymentReceiptFileRequest request, CancellationToken cancellationToken)
+    {
+        var validationError = ValidateFile(request.File, AllowedReceiptExtensions, MaximumReceiptSizeBytes);
+        if (validationError is not null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        var payment = await sender.Send(new GetPaymentByIdQuery(request.PaymentId), cancellationToken);
+        if (payment.IsFailure)
+        {
+            return this.ToActionResult(payment);
+        }
+
+        var order = await sender.Send(new GetOrderByIdQuery(payment.Value.OrderId), cancellationToken);
+        if (order.IsFailure)
+        {
+            return this.ToActionResult(order);
+        }
+
+        if (order.Value.UserId != User.GetUserId())
+        {
+            return Forbid();
+        }
+
+        var storedFile = await fileStorage.SaveAsync(
+            new FileStorageUpload(
+                "payment-receipts",
+                request.File.FileName,
+                request.File.ContentType,
+                request.File.OpenReadStream()),
+            cancellationToken);
+
+        var result = await sender.Send(
+            new UploadPaymentReceiptCommand(
+                request.PaymentId,
+                storedFile.Url,
+                request.OperationCode,
+                request.DeclaredAmount,
+                request.Currency),
+            cancellationToken);
+
+        return result.IsSuccess
+            ? Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key })
+            : BadRequest(result.Error);
     }
 
     [Authorize(Roles = ApiRoles.AnyAuthenticated)]
@@ -163,6 +226,24 @@ public sealed class PaymentReceiptsController(ISender sender) : ControllerBase
 
         return this.ToActionResult(await sender.Send(new GetPaymentReceiptsByPaymentQuery(paymentId), cancellationToken));
     }
+
+    private static string? ValidateFile(IFormFile file, HashSet<string> allowedExtensions, long maximumSizeBytes)
+    {
+        if (file is null || file.Length == 0)
+        {
+            return "File is required.";
+        }
+
+        if (file.Length > maximumSizeBytes)
+        {
+            return $"File should not exceed {maximumSizeBytes / 1024 / 1024} MB.";
+        }
+
+        var extension = Path.GetExtension(file.FileName);
+        return allowedExtensions.Contains(extension)
+            ? null
+            : $"File extension '{extension}' is not allowed.";
+    }
 }
 
 [ApiController]
@@ -190,3 +271,12 @@ public sealed record UpdatePaymentMethodRequest(string Name, PaymentMethodType T
 public sealed record CreatePaymentRequest(Guid OrderId, Guid PaymentMethodId, decimal Amount, string Currency = "PEN");
 public sealed record UploadPaymentReceiptRequest(Guid PaymentId, string FileUrl, string? OperationCode, decimal? DeclaredAmount, string Currency = "PEN");
 public sealed record ReviewPaymentRequest(Guid PaymentId, PaymentReviewResult Result, string? Observation);
+
+public sealed class UploadPaymentReceiptFileRequest
+{
+    public Guid PaymentId { get; init; }
+    public string? OperationCode { get; init; }
+    public decimal? DeclaredAmount { get; init; }
+    public string Currency { get; init; } = "PEN";
+    public IFormFile File { get; init; } = null!;
+}
