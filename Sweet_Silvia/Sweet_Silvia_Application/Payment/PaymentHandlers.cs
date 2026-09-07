@@ -3,6 +3,7 @@ using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.PaymentReceipt;
 using Sweet_Silvia_Application.PaymentReview;
 using Sweet_Silvia_Domain.Abstractions;
+using Sweet_Silvia_Domain.Coupon;
 using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.Payment;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
@@ -15,12 +16,16 @@ using PaymentReceiptEntity = Sweet_Silvia_Domain.PaymentReceipt.PaymentReceipt;
 using PaymentReviewEntity = Sweet_Silvia_Domain.PaymentReview.PaymentReview;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using StockMovementEntity = Sweet_Silvia_Domain.StockMovement.StockMovement;
+using PaymentMethodEntity = Sweet_Silvia_Domain.PaymentMethod.PaymentMethod;
+using CouponEntity = Sweet_Silvia_Domain.Coupon.Coupon;
+using CouponUsageEntity = Sweet_Silvia_Domain.CouponUsage.CouponUsage;
 
 namespace Sweet_Silvia_Application.Payment;
 
 internal sealed class CreatePendingPaymentCommandHandler(
     IRepository<PaymentEntity> payments,
     IRepository<OrderEntity> orders,
+    IRepository<PaymentMethodEntity> paymentMethods,
     IUnitOfWork unitOfWork)
     : ICommandHandler<CreatePendingPaymentCommand, Guid>
 {
@@ -30,6 +35,39 @@ internal sealed class CreatePendingPaymentCommandHandler(
         if (order is null)
         {
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Order", request.OrderId));
+        }
+
+        var paymentMethod = await paymentMethods.GetByIdAsync(request.PaymentMethodId, cancellationToken);
+        if (paymentMethod is null || !paymentMethod.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("PaymentMethod", request.PaymentMethodId));
+        }
+
+        if (paymentMethod.RequiresExternalIntegration)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "PaymentMethod.ExternalIntegrationRequired",
+                "This payment method requires a gateway integration flow."));
+        }
+
+        if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Order.InvalidPaymentStatus",
+                "A payment can only be created for an order awaiting payment."));
+        }
+
+        var hasActivePayment = payments.Query().Any(payment =>
+            payment.OrderId == order.Id &&
+            (payment.Status == PaymentStatus.PendingReceipt ||
+             payment.Status == PaymentStatus.InReview ||
+             payment.Status == PaymentStatus.PendingGateway ||
+             payment.Status == PaymentStatus.Approved));
+        if (hasActivePayment)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Payment.ActivePaymentExists",
+                "This order already has an active payment."));
         }
 
         var amount = Money.Create(request.Amount, request.Currency);
@@ -49,7 +87,10 @@ internal sealed class CreatePendingPaymentCommandHandler(
     }
 }
 
-internal sealed class MarkPaymentReceiptUploadedCommandHandler(IRepository<PaymentEntity> payments, IUnitOfWork unitOfWork)
+internal sealed class MarkPaymentReceiptUploadedCommandHandler(
+    IRepository<PaymentEntity> payments,
+    IRepository<OrderEntity> orders,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<MarkPaymentReceiptUploadedCommand>
 {
     public async Task<Result> Handle(MarkPaymentReceiptUploadedCommand request, CancellationToken cancellationToken)
@@ -58,6 +99,19 @@ internal sealed class MarkPaymentReceiptUploadedCommandHandler(IRepository<Payme
         if (payment is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("Payment", request.PaymentId));
+        }
+
+        var order = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
+        if (order is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Order", payment.OrderId));
+        }
+
+        if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Order.InvalidPaymentStatus",
+                "A receipt can only be uploaded for an order awaiting payment."));
         }
 
         payment.MarkReceiptUploaded();
@@ -121,6 +175,19 @@ internal sealed class UploadPaymentReceiptCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Payment", request.PaymentId));
         }
 
+        var order = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
+        if (order is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Order", payment.OrderId));
+        }
+
+        if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Order.InvalidPaymentStatus",
+                "A receipt can only be uploaded for an order awaiting payment."));
+        }
+
         var declaredAmount = request.DeclaredAmount.HasValue ? Money.Create(request.DeclaredAmount.Value, request.Currency) : null;
         if (declaredAmount is not null && (declaredAmount.Amount != payment.Amount.Amount || declaredAmount.Currency != payment.Amount.Currency))
         {
@@ -136,8 +203,7 @@ internal sealed class UploadPaymentReceiptCommandHandler(
         payment.MarkReceiptUploaded();
         receipts.Add(receipt);
 
-        var order = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
-        if (order is not null && order.Status == OrderStatus.PendingReceipt)
+        if (order.Status == OrderStatus.PendingReceipt)
         {
             var previousStatus = order.Status;
             order.ChangeStatus(OrderStatus.ReceiptInReview);
@@ -161,6 +227,18 @@ internal sealed class GetPaymentReceiptsByPaymentQueryHandler(IRepository<Paymen
     }
 }
 
+internal sealed class GetPaymentReceiptByIdQueryHandler(IRepository<PaymentReceiptEntity> receipts)
+    : IQueryHandler<GetPaymentReceiptByIdQuery, PaymentReceiptResponse>
+{
+    public Task<Result<PaymentReceiptResponse>> Handle(GetPaymentReceiptByIdQuery request, CancellationToken cancellationToken)
+    {
+        var receipt = receipts.Query().FirstOrDefault(receipt => receipt.Id == request.Id);
+        return Task.FromResult(receipt is null
+            ? Result.Failure<PaymentReceiptResponse>(ApplicationErrors.NotFound("PaymentReceipt", request.Id))
+            : Result.Success(PaymentMappings.ToReceiptResponse(receipt)));
+    }
+}
+
 internal sealed class ReviewPaymentCommandHandler(
     IRepository<PaymentEntity> payments,
     IRepository<PaymentReviewEntity> reviews,
@@ -169,6 +247,8 @@ internal sealed class ReviewPaymentCommandHandler(
     IRepository<ProductVariantEntity> variants,
     IRepository<StockMovementEntity> stockMovements,
     IRepository<OrderStatusHistoryEntity> histories,
+    IRepository<CouponEntity> coupons,
+    IRepository<CouponUsageEntity> couponUsages,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ReviewPaymentCommand, Guid>
 {
@@ -180,12 +260,26 @@ internal sealed class ReviewPaymentCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Payment", request.PaymentId));
         }
 
+        if (payment.Status != PaymentStatus.InReview)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Payment.NotInReview",
+                "Only payments in review can be approved or rejected manually."));
+        }
+
+        if (request.Result is not PaymentReviewResult.Approved and not PaymentReviewResult.Rejected)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "PaymentReview.InvalidResult",
+                "Payment review result should be Approved or Rejected."));
+        }
+
         var review = PaymentReviewEntity.Create(request.PaymentId, request.ReviewerUserId, request.Result, request.Observation);
         reviews.Add(review);
 
         if (request.Result == PaymentReviewResult.Approved)
         {
-            var stockValidation = await ApprovePaymentAndDiscountStock(payment, request.ReviewerUserId, request.Observation, orders, orderItems, variants, stockMovements, histories, cancellationToken);
+            var stockValidation = await PaymentSettlementService.Approve(payment, request.ReviewerUserId, null, request.Observation, orders, orderItems, variants, stockMovements, histories, coupons, couponUsages, cancellationToken);
             if (stockValidation.IsFailure)
             {
                 return Result.Failure<Guid>(stockValidation.Error);
@@ -200,15 +294,22 @@ internal sealed class ReviewPaymentCommandHandler(
         return review.Id;
     }
 
-    private static async Task<Result> ApprovePaymentAndDiscountStock(
+}
+
+internal static class PaymentSettlementService
+{
+    public static async Task<Result> Approve(
         PaymentEntity payment,
-        Guid reviewerUserId,
+        Guid? reviewerUserId,
+        string? gatewayAuthorizationCode,
         string? observation,
         IRepository<OrderEntity> orders,
         IRepository<OrderItemEntity> orderItems,
         IRepository<ProductVariantEntity> variants,
         IRepository<StockMovementEntity> stockMovements,
         IRepository<OrderStatusHistoryEntity> histories,
+        IRepository<CouponEntity> coupons,
+        IRepository<CouponUsageEntity> couponUsages,
         CancellationToken cancellationToken)
     {
         var order = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
@@ -217,7 +318,74 @@ internal sealed class ReviewPaymentCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Order", payment.OrderId));
         }
 
-        foreach (var item in orderItems.Query().Where(item => item.OrderId == order.Id).ToList())
+        if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Order.InvalidPaymentStatus",
+                "Only orders awaiting payment can be settled."));
+        }
+
+        var items = orderItems.Query().Where(item => item.OrderId == order.Id).ToList();
+        if (items.Count == 0)
+        {
+            return Result.Failure(ApplicationErrors.Conflict("Order.Empty", "The order has no items to settle."));
+        }
+
+        CouponUsageEntity? couponUsage = null;
+        if (order.CouponId.HasValue && !couponUsages.Query().Any(item => item.OrderId == order.Id))
+        {
+            var coupon = await coupons.GetByIdAsync(order.CouponId.Value, cancellationToken);
+            if (coupon is null)
+            {
+                return Result.Failure(ApplicationErrors.NotFound("Coupon", order.CouponId.Value));
+            }
+
+            if (coupon.MaximumTotalUses.HasValue &&
+                couponUsages.Query().Count(item => item.CouponId == coupon.Id) >= coupon.MaximumTotalUses.Value)
+            {
+                return Result.Failure(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "The coupon has reached its total usage limit."));
+            }
+
+            if (coupon.MaximumUsesPerUser.HasValue &&
+                couponUsages.Query().Count(item => item.CouponId == coupon.Id && item.UserId == order.UserId) >= coupon.MaximumUsesPerUser.Value)
+            {
+                return Result.Failure(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "The user has reached the coupon usage limit."));
+            }
+
+            if (coupon.Scope == CouponScope.Order)
+            {
+                couponUsage = CouponUsageEntity.Create(
+                    coupon.Id,
+                    order.UserId,
+                    order.Id,
+                    CouponScope.Order,
+                    null,
+                    null,
+                    order.DiscountTotal);
+            }
+            else
+            {
+                var discountedItem = items.FirstOrDefault(item => item.HistoricalUnitDiscount.Amount > 0);
+                if (discountedItem is null)
+                {
+                    return Result.Failure(ApplicationErrors.Conflict("Coupon.NotApplicable", "The order does not contain a discounted item."));
+                }
+
+                couponUsage = CouponUsageEntity.Create(
+                    coupon.Id,
+                    order.UserId,
+                    order.Id,
+                    CouponScope.Item,
+                    discountedItem.Id,
+                    Math.Min(order.CouponAppliedQuantity ?? 1, discountedItem.Quantity),
+                    order.DiscountTotal);
+            }
+
+            couponUsages.Add(couponUsage);
+        }
+
+        var itemVariants = new List<(OrderItemEntity Item, ProductVariantEntity Variant)>();
+        foreach (var item in items)
         {
             var variant = await variants.GetByIdAsync(item.ProductVariantId, cancellationToken);
             if (variant is null || !variant.IsActive)
@@ -230,6 +398,11 @@ internal sealed class ReviewPaymentCommandHandler(
                 return Result.Failure(ApplicationErrors.Conflict("Stock.NotEnough", $"Product variant '{variant.Id}' does not have enough stock."));
             }
 
+            itemVariants.Add((item, variant));
+        }
+
+        foreach (var (item, variant) in itemVariants)
+        {
             var previousStock = variant.PhysicalStock;
             variant.DecreaseStock(item.Quantity);
             stockMovements.Add(StockMovementEntity.Create(
@@ -242,7 +415,14 @@ internal sealed class ReviewPaymentCommandHandler(
                 "Payment approved."));
         }
 
-        payment.Approve(reviewerUserId, observation);
+        if (reviewerUserId.HasValue)
+        {
+            payment.Approve(reviewerUserId.Value, observation);
+        }
+        else
+        {
+            payment.ApproveFromGateway(gatewayAuthorizationCode, observation);
+        }
 
         var previousStatus = order.Status;
         order.ChangeStatus(OrderStatus.Paid, reviewerUserId, observation);
@@ -286,6 +466,8 @@ internal static class PaymentMappings
             payment.Currency,
             payment.TransactionCode,
             payment.AuthorizationCode,
+            payment.GatewayTransactionId,
+            payment.GatewayExpiresAt,
             payment.CreatedAt,
             payment.PaidAt,
             payment.ReceiptUploadedAt,

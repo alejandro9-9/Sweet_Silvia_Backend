@@ -2,13 +2,17 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Sweet_Silvia_Application.Abstractions.Audit;
+using Sweet_Silvia_Infrastructure;
 
 namespace Sweet_Silvia_Api.Filters;
 
 public sealed class GlobalActionLoggingFilter(
     ILogger<GlobalActionLoggingFilter> logger,
-    IAuditLogWriter auditLogWriter)
+    IAuditLogWriter auditLogWriter,
+    ApplicationDbContext dbContext)
     : IAsyncActionFilter
 {
     private static readonly string[] SensitiveKeys =
@@ -24,6 +28,7 @@ public sealed class GlobalActionLoggingFilter(
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         logger.LogInformation("Executing action {ActionName}", context.ActionDescriptor.DisplayName);
+        var oldValues = await CaptureOldValuesAsync(context);
         var result = await next();
         logger.LogInformation(
             "Executed action {ActionName} with status {StatusCode}",
@@ -45,7 +50,7 @@ public sealed class GlobalActionLoggingFilter(
                 GetEntityId(context),
                 GetIpAddress(context),
                 context.HttpContext.Request.Headers.UserAgent.ToString(),
-                null,
+                oldValues,
                 SanitizeActionArguments(context.ActionArguments),
                 context.ActionDescriptor.DisplayName,
                 context.HttpContext.RequestAborted);
@@ -81,6 +86,123 @@ public sealed class GlobalActionLoggingFilter(
         return context.HttpContext.Request.Path.StartsWithSegments("/api/auth", StringComparison.OrdinalIgnoreCase);
     }
 
+    private async Task<Dictionary<string, object?>?> CaptureOldValuesAsync(ActionExecutingContext context)
+    {
+        if (context.HttpContext.Request.Method is not ("PUT" or "PATCH" or "DELETE"))
+        {
+            return null;
+        }
+
+        var entityId = GetEntityId(context);
+        if (entityId is null)
+        {
+            return null;
+        }
+
+        var entityType = FindEntityType(dbContext, GetEntityName(context));
+        if (entityType is null)
+        {
+            return null;
+        }
+
+        var key = entityType.FindPrimaryKey();
+        if (key?.Properties.Count != 1)
+        {
+            return null;
+        }
+
+        var tableName = entityType.GetTableName();
+        if (string.IsNullOrWhiteSpace(tableName))
+        {
+            return null;
+        }
+
+        var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
+        var keyColumn = key.Properties[0].GetColumnName(storeObject);
+        if (string.IsNullOrWhiteSpace(keyColumn))
+        {
+            return null;
+        }
+
+        var properties = entityType.GetProperties()
+            .Where(property => !property.IsShadowProperty())
+            .Select(property => new
+            {
+                property.Name,
+                ColumnName = property.GetColumnName(storeObject)
+            })
+            .Where(property => !string.IsNullOrWhiteSpace(property.ColumnName))
+            .ToList();
+
+        if (properties.Count == 0)
+        {
+            return null;
+        }
+
+        var quotedColumns = string.Join(", ", properties.Select(property => QuoteIdentifier(property.ColumnName!)));
+        var schemaPrefix = string.IsNullOrWhiteSpace(entityType.GetSchema()) ? string.Empty : $"{QuoteIdentifier(entityType.GetSchema()!)}.";
+
+        await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        command.CommandText = $"SELECT {quotedColumns} FROM {schemaPrefix}{QuoteIdentifier(tableName)} WHERE {QuoteIdentifier(keyColumn)} = @id LIMIT 1";
+
+        var idParameter = command.CreateParameter();
+        idParameter.ParameterName = "@id";
+        idParameter.Value = entityId.Value;
+        command.Parameters.Add(idParameter);
+
+        if (command.Connection?.State != System.Data.ConnectionState.Open)
+        {
+            await dbContext.Database.OpenConnectionAsync(context.HttpContext.RequestAborted);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(context.HttpContext.RequestAborted);
+        if (!await reader.ReadAsync(context.HttpContext.RequestAborted))
+        {
+            return null;
+        }
+
+        var values = new Dictionary<string, object?>();
+        foreach (var property in properties)
+        {
+            var value = reader[property.ColumnName!];
+            values[property.Name] = value is DBNull ? null : value;
+        }
+
+        return SanitizeDictionary(values);
+    }
+
+    private static IEntityType? FindEntityType(ApplicationDbContext dbContext, string controllerName)
+    {
+        var candidates = GetEntityNameCandidates(controllerName);
+        return dbContext.Model.GetEntityTypes()
+            .FirstOrDefault(entityType => candidates.Contains(entityType.ClrType.Name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static HashSet<string> GetEntityNameCandidates(string controllerName)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            controllerName
+        };
+
+        if (controllerName.EndsWith("ies", StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add($"{controllerName[..^3]}y");
+        }
+
+        if (controllerName.EndsWith("es", StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add(controllerName[..^2]);
+        }
+
+        if (controllerName.EndsWith("s", StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add(controllerName[..^1]);
+        }
+
+        return candidates;
+    }
+
     private static Guid? GetUserId(ActionExecutingContext context)
     {
         var value = context.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -101,18 +223,19 @@ public sealed class GlobalActionLoggingFilter(
 
     private static string? GetIpAddress(ActionExecutingContext context)
     {
-        var forwardedFor = context.HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwardedFor))
-        {
-            return forwardedFor.Split(',')[0].Trim();
-        }
-
         return context.HttpContext.Connection.RemoteIpAddress?.ToString();
     }
 
     private static Dictionary<string, object?> SanitizeActionArguments(IDictionary<string, object?> actionArguments)
     {
         return actionArguments.ToDictionary(
+            pair => pair.Key,
+            pair => IsSensitive(pair.Key) ? "***" : SanitizeValue(pair.Value));
+    }
+
+    private static Dictionary<string, object?> SanitizeDictionary(Dictionary<string, object?> values)
+    {
+        return values.ToDictionary(
             pair => pair.Key,
             pair => IsSensitive(pair.Key) ? "***" : SanitizeValue(pair.Value));
     }
@@ -146,5 +269,10 @@ public sealed class GlobalActionLoggingFilter(
     private static bool IsSensitive(string key)
     {
         return SensitiveKeys.Any(sensitiveKey => key.Contains(sensitiveKey, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string QuoteIdentifier(string value)
+    {
+        return $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
     }
 }

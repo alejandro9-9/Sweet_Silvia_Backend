@@ -85,7 +85,12 @@ internal sealed class GetCouponByCodeQueryHandler(IRepository<CouponEntity> coup
     public Task<Result<CouponResponse>> Handle(GetCouponByCodeQuery request, CancellationToken cancellationToken)
     {
         var code = CouponCode.Create(request.Code);
-        var coupon = coupons.Query().FirstOrDefault(coupon => coupon.Code == code);
+        var now = DateTimeOffset.UtcNow;
+        var coupon = coupons.Query().FirstOrDefault(coupon =>
+            coupon.Code == code &&
+            coupon.IsActive &&
+            coupon.StartDate <= now &&
+            coupon.EndDate >= now);
         return Task.FromResult(coupon is null
             ? Result.Failure<CouponResponse>(ApplicationErrors.NotFound("Coupon"))
             : Result.Success(CouponMappings.ToResponse(coupon)));

@@ -8,3 +8,5 @@ public sealed record PaymentReceiptResponse(Guid Id, Guid PaymentId, string File
 public sealed record UploadPaymentReceiptCommand(Guid PaymentId, string FileUrl, string? OperationCode, decimal? DeclaredAmount, string Currency = "PEN") : ICommand<Guid>;
 
 public sealed record GetPaymentReceiptsByPaymentQuery(Guid PaymentId) : IQuery<List<PaymentReceiptResponse>>;
+
+public sealed record GetPaymentReceiptByIdQuery(Guid Id) : IQuery<PaymentReceiptResponse>;

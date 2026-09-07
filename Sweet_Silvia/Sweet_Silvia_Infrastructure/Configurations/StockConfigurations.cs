@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using OrderEntity = Sweet_Silvia_Domain.Order.Order;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using StockMovementEntity = Sweet_Silvia_Domain.StockMovement.StockMovement;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
@@ -21,5 +23,7 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
         builder.HasIndex(entity => entity.ProductVariantId);
         builder.HasIndex(entity => entity.OrderId);
         builder.HasIndex(entity => entity.Type);
+        builder.HasOne<ProductVariantEntity>().WithMany().HasForeignKey(entity => entity.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -254,16 +254,26 @@ internal sealed class AddCartItemCommandHandler(
             item.IncreaseQuantity(request.Quantity);
         }
 
+        cart.Touch();
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
 }
 
-internal sealed class UpdateCartItemQuantityCommandHandler(IRepository<CartItemEntity> cartItems, IUnitOfWork unitOfWork)
+internal sealed class UpdateCartItemQuantityCommandHandler(
+    IRepository<CartItemEntity> cartItems,
+    IRepository<CartEntity> carts,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<UpdateCartItemQuantityCommand>
 {
     public async Task<Result> Handle(UpdateCartItemQuantityCommand request, CancellationToken cancellationToken)
     {
+        var cart = await carts.GetByIdAsync(request.CartId, cancellationToken);
+        if (cart is null || !cart.IsActive)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is null)
         {
@@ -279,16 +289,26 @@ internal sealed class UpdateCartItemQuantityCommandHandler(IRepository<CartItemE
             item.SetQuantity(request.Quantity);
         }
 
+        cart.Touch();
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
 }
 
-internal sealed class DecreaseCartItemQuantityCommandHandler(IRepository<CartItemEntity> cartItems, IUnitOfWork unitOfWork)
+internal sealed class DecreaseCartItemQuantityCommandHandler(
+    IRepository<CartItemEntity> cartItems,
+    IRepository<CartEntity> carts,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<DecreaseCartItemQuantityCommand>
 {
     public async Task<Result> Handle(DecreaseCartItemQuantityCommand request, CancellationToken cancellationToken)
     {
+        var cart = await carts.GetByIdAsync(request.CartId, cancellationToken);
+        if (cart is null || !cart.IsActive)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is null)
         {
@@ -304,20 +324,31 @@ internal sealed class DecreaseCartItemQuantityCommandHandler(IRepository<CartIte
             item.DecreaseQuantity(request.Quantity);
         }
 
+        cart.Touch();
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
 }
 
-internal sealed class RemoveCartItemCommandHandler(IRepository<CartItemEntity> cartItems, IUnitOfWork unitOfWork)
+internal sealed class RemoveCartItemCommandHandler(
+    IRepository<CartItemEntity> cartItems,
+    IRepository<CartEntity> carts,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<RemoveCartItemCommand>
 {
     public async Task<Result> Handle(RemoveCartItemCommand request, CancellationToken cancellationToken)
     {
+        var cart = await carts.GetByIdAsync(request.CartId, cancellationToken);
+        if (cart is null || !cart.IsActive)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is not null)
         {
             cartItems.Remove(item);
+            cart.Touch();
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
@@ -325,16 +356,26 @@ internal sealed class RemoveCartItemCommandHandler(IRepository<CartItemEntity> c
     }
 }
 
-internal sealed class ClearCartCommandHandler(IRepository<CartItemEntity> cartItems, IUnitOfWork unitOfWork)
+internal sealed class ClearCartCommandHandler(
+    IRepository<CartItemEntity> cartItems,
+    IRepository<CartEntity> carts,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<ClearCartCommand>
 {
     public async Task<Result> Handle(ClearCartCommand request, CancellationToken cancellationToken)
     {
+        var cart = await carts.GetByIdAsync(request.CartId, cancellationToken);
+        if (cart is null || !cart.IsActive)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
+        }
+
         foreach (var item in cartItems.Query().Where(item => item.CartId == request.CartId))
         {
             cartItems.Remove(item);
         }
 
+        cart.Touch();
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -389,6 +430,11 @@ internal sealed class ApplyCouponToCartCommandHandler(
             return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.NotFound("Cart", request.CartId));
         }
 
+        if (cart.UserId != request.UserId)
+        {
+            return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.NotFound("Cart", request.CartId));
+        }
+
         var coupon = await coupons.GetByIdAsync(request.CouponId, cancellationToken);
         if (coupon is null || !coupon.IsActive || DateTimeOffset.UtcNow < coupon.StartDate || DateTimeOffset.UtcNow > coupon.EndDate)
         {
@@ -410,19 +456,34 @@ internal sealed class ApplyCouponToCartCommandHandler(
             return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "Coupon has already been used by this user."));
         }
 
-        if (appliedCoupons.Query().Any(appliedCoupon => appliedCoupon.CartId == request.CartId && appliedCoupon.CouponId == request.CouponId))
+        if (appliedCoupons.Query().Any(appliedCoupon => appliedCoupon.CartId == request.CartId))
         {
-            return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.AlreadyApplied", "Coupon is already applied to this cart."));
-        }
-
-        if (coupon.Scope == CouponScope.Order && appliedCoupons.Query().Any(appliedCoupon => appliedCoupon.CartId == request.CartId && appliedCoupon.Scope == CouponScope.Order))
-        {
-            return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.OrderCouponAlreadyApplied", "Cart already has an order coupon applied."));
+            return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.AlreadyApplied", "Only one coupon can be applied to a cart."));
         }
 
         if (coupon.Scope == CouponScope.Item && !request.CartItemId.HasValue)
         {
             return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.CartItemRequired", "Item coupons require a cart item."));
+        }
+
+        if (coupon.Scope == CouponScope.Order && (request.CartItemId.HasValue || request.AppliedQuantity.HasValue))
+        {
+            return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.InvalidQuantity", "Order coupons cannot target a cart item or quantity."));
+        }
+
+        if (coupon.Scope == CouponScope.Item)
+        {
+            var cartItemId = request.CartItemId.GetValueOrDefault();
+            var cartItem = cartItems.Query().FirstOrDefault(item => item.Id == cartItemId && item.CartId == request.CartId);
+            if (cartItem is null)
+            {
+                return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.NotFound("CartItem", cartItemId));
+            }
+
+            if (!request.AppliedQuantity.HasValue || request.AppliedQuantity.Value <= 0 || request.AppliedQuantity.Value > cartItem.Quantity)
+            {
+                return Result.Failure<CartAppliedCouponResponse>(ApplicationErrors.Conflict("Coupon.InvalidQuantity", "Applied quantity must be between one and the cart item quantity."));
+            }
         }
 
         var discount = CalculateEstimatedDiscount(request, coupon, cartItems, restrictions, variants, products);
@@ -440,6 +501,7 @@ internal sealed class ApplyCouponToCartCommandHandler(
             discount);
 
         appliedCoupons.Add(appliedCoupon);
+        cart.Touch();
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return CustomerMappings.ToAppliedCouponResponse(appliedCoupon);
@@ -524,7 +586,10 @@ internal sealed class ApplyCouponToCartCommandHandler(
     }
 }
 
-internal sealed class RemoveCouponFromCartCommandHandler(IRepository<CartAppliedCouponEntity> appliedCoupons, IUnitOfWork unitOfWork)
+internal sealed class RemoveCouponFromCartCommandHandler(
+    IRepository<CartAppliedCouponEntity> appliedCoupons,
+    IRepository<CartEntity> carts,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<RemoveCouponFromCartCommand>
 {
     public async Task<Result> Handle(RemoveCouponFromCartCommand request, CancellationToken cancellationToken)
@@ -532,7 +597,14 @@ internal sealed class RemoveCouponFromCartCommandHandler(IRepository<CartApplied
         var appliedCoupon = await appliedCoupons.GetByIdAsync(request.CartAppliedCouponId, cancellationToken);
         if (appliedCoupon is not null)
         {
+            var cart = await carts.GetByIdAsync(appliedCoupon.CartId, cancellationToken);
+            if (cart is null || !cart.IsActive)
+            {
+                return Result.Failure(ApplicationErrors.NotFound("Cart", appliedCoupon.CartId));
+            }
+
             appliedCoupons.Remove(appliedCoupon);
+            cart.Touch();
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 

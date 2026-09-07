@@ -5,6 +5,7 @@ using Sweet_Silvia_Application.ShipmentEvent;
 using Sweet_Silvia_Application.ShippingRate;
 using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.Courier;
+using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.Shared.Enums;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
 using Sweet_Silvia_Domain.Shipment;
@@ -15,6 +16,7 @@ using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 using ShipmentEntity = Sweet_Silvia_Domain.Shipment.Shipment;
 using ShipmentEventEntity = Sweet_Silvia_Domain.ShipmentEvent.ShipmentEvent;
 using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
+using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 
 namespace Sweet_Silvia_Application.Courier;
 
@@ -114,6 +116,13 @@ internal sealed class CreateShippingRateCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Courier", request.CourierId));
         }
 
+        if (courier.Type != request.CourierType)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.CourierTypeMismatch",
+                "The selected courier type does not match the configured courier."));
+        }
+
         var rate = ShippingRateEntity.Create(
             request.CourierId,
             request.CourierType,
@@ -161,6 +170,13 @@ internal sealed class UpdateShippingRateCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Courier", request.CourierId));
         }
 
+        if (courier.Type != request.CourierType)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Shipping.CourierTypeMismatch",
+                "The selected courier type does not match the configured courier."));
+        }
+
         rate.Update(
             request.CourierId,
             request.CourierType,
@@ -197,24 +213,29 @@ internal sealed class DeleteShippingRateCommandHandler(IRepository<ShippingRateE
 
 internal sealed class CalculateShippingCostQueryHandler(
     IRepository<ShippingRateEntity> rates,
-    IRepository<DepartmentEntity> departments)
+    IRepository<DepartmentEntity> departments,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DistrictEntity> districts,
+    IRepository<CourierEntity> couriers)
     : IQueryHandler<CalculateShippingCostQuery, ShippingCostResponse>
 {
     public Task<Result<ShippingCostResponse>> Handle(CalculateShippingCostQuery request, CancellationToken cancellationToken)
     {
-        var department = departments.Query().FirstOrDefault(department => department.Id == request.DepartmentId && department.IsActive);
-        if (department is null)
+        var locationValidation = ShippingMappings.ValidateShippingLocation(
+            request.DepartmentId,
+            request.ProvinceId,
+            request.DistrictId,
+            request.DestinationType,
+            departments,
+            provinces,
+            districts);
+        if (locationValidation.IsFailure)
         {
-            return Task.FromResult(Result.Failure<ShippingCostResponse>(ApplicationErrors.NotFound("Department", request.DepartmentId)));
-        }
-
-        if (department.DestinationType != request.DestinationType)
-        {
-            return Task.FromResult(Result.Failure<ShippingCostResponse>(ApplicationErrors.Conflict("Shipping.InvalidDestination", "Department destination type does not match the requested destination type.")));
+            return Task.FromResult(Result.Failure<ShippingCostResponse>(locationValidation.Error));
         }
 
         var rate = rates.Query()
-            .Where(rate => rate.IsActive)
+            .Where(rate => rate.IsActive && couriers.Query().Any(courier => courier.Id == rate.CourierId && courier.IsActive))
             .AsEnumerable()
             .Where(rate => rate.AppliesTo(request.DepartmentId, request.ProvinceId, request.DistrictId, request.DestinationType))
             .OrderByDescending(rate => rate.DistrictId.HasValue)
@@ -243,7 +264,9 @@ internal sealed class CalculateShippingCostQueryHandler(
     }
 }
 
-internal sealed class GetShippingRatesQueryHandler(IRepository<ShippingRateEntity> rates)
+internal sealed class GetShippingRatesQueryHandler(
+    IRepository<ShippingRateEntity> rates,
+    IRepository<CourierEntity> couriers)
     : IQueryHandler<GetShippingRatesQuery, List<ShippingRateResponse>>
 {
     public Task<Result<List<ShippingRateResponse>>> Handle(GetShippingRatesQuery request, CancellationToken cancellationToken)
@@ -251,7 +274,8 @@ internal sealed class GetShippingRatesQueryHandler(IRepository<ShippingRateEntit
         var query = rates.Query();
         if (request.OnlyActive)
         {
-            query = query.Where(rate => rate.IsActive);
+            query = query.Where(rate => rate.IsActive &&
+                couriers.Query().Any(courier => courier.Id == rate.CourierId && courier.IsActive));
         }
 
         if (request.DepartmentId.HasValue)
@@ -321,11 +345,70 @@ internal static class ShippingVolumeCalculator
     }
 }
 
-internal sealed class CreateShipmentCommandHandler(IRepository<ShipmentEntity> shipments, IUnitOfWork unitOfWork)
+internal sealed class CreateShipmentCommandHandler(
+    IRepository<ShipmentEntity> shipments,
+    IRepository<OrderEntity> orders,
+    IRepository<CourierEntity> couriers,
+    IRepository<DepartmentEntity> departments,
+    IRepository<Sweet_Silvia_Domain.Address.Address> addresses,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<CreateShipmentCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateShipmentCommand request, CancellationToken cancellationToken)
     {
+        var order = await orders.GetByIdAsync(request.OrderId, cancellationToken);
+        if (order is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Order", request.OrderId));
+        }
+
+        if (order.Status is not OrderStatus.Paid and not OrderStatus.Preparing and not OrderStatus.Shipped)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipment.OrderNotReady",
+                "A shipment can only be created for a paid order."));
+        }
+
+        var courier = await couriers.GetByIdAsync(request.CourierId, cancellationToken);
+        if (courier is null || !courier.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Courier", request.CourierId));
+        }
+
+        var address = await addresses.GetByIdAsync(order.AddressId, cancellationToken);
+        if (address is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", order.AddressId));
+        }
+
+        var department = await departments.GetByIdAsync(address.DepartmentId, cancellationToken);
+        if (department is null || !department.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", address.DepartmentId));
+        }
+
+        if (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipment.InvalidCourier",
+                "Province orders can only be sent through an agency courier."));
+        }
+
+        if (shipments.Query().Any(shipment => shipment.OrderId == request.OrderId))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipment.AlreadyExists",
+                "The order already has a shipment."));
+        }
+
+        if (request.ShippingCost != order.ShippingCost.Amount ||
+            !string.Equals(request.Currency, order.ShippingCost.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipment.InvalidCost",
+                "Shipment cost must match the shipping cost stored in the order."));
+        }
+
         var shipment = ShipmentEntity.Create(request.OrderId, request.CourierId, Money.Create(request.ShippingCost, request.Currency));
         shipments.Add(shipment);
         await unitOfWork.SaveChangesAsync(cancellationToken);

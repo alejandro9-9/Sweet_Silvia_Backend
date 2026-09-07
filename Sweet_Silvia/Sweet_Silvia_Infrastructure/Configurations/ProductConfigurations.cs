@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using CategoryEntity = Sweet_Silvia_Domain.Category.Category;
+using CollectionEntity = Sweet_Silvia_Domain.Collection.Collection;
 using ProductEntity = Sweet_Silvia_Domain.Product.Product;
 using ProductImageEntity = Sweet_Silvia_Domain.ProductImage.ProductImage;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
@@ -22,6 +24,8 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<ProductEnt
         builder.Property(entity => entity.UpdatedAt);
         builder.HasIndex(entity => entity.CategoryId);
         builder.HasIndex(entity => entity.CollectionId);
+        builder.HasOne<CategoryEntity>().WithMany().HasForeignKey(entity => entity.CategoryId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<CollectionEntity>().WithMany().HasForeignKey(entity => entity.CollectionId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -42,6 +46,8 @@ internal sealed class ProductVariantConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(entity => entity.UpdatedAt);
         builder.HasIndex(entity => entity.ProductId);
         builder.HasIndex(entity => entity.Sku).IsUnique();
+        builder.HasOne<ProductEntity>().WithMany().HasForeignKey(entity => entity.ProductId).OnDelete(DeleteBehavior.Restrict);
+        builder.Property<uint>("xmin").IsRowVersion();
     }
 }
 
@@ -59,5 +65,7 @@ internal sealed class ProductImageConfiguration : IEntityTypeConfiguration<Produ
         builder.Property(entity => entity.IsMain).IsRequired();
         builder.HasIndex(entity => entity.ProductId);
         builder.HasIndex(entity => entity.ProductVariantId);
+        builder.HasOne<ProductEntity>().WithMany().HasForeignKey(entity => entity.ProductId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<ProductVariantEntity>().WithMany().HasForeignKey(entity => entity.ProductVariantId).OnDelete(DeleteBehavior.SetNull);
     }
 }

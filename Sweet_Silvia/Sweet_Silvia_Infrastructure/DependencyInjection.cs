@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Sweet_Silvia_Application.Abstractions.Audit;
 using Sweet_Silvia_Application.Abstractions.Email;
+using Sweet_Silvia_Application.Abstractions.Payments;
 using Sweet_Silvia_Application.Abstractions.Security;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Abstractions.Storage;
@@ -17,6 +18,7 @@ using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.RefreshToken;
 using Sweet_Silvia_Infrastructure.Abstractions.Audit;
 using Sweet_Silvia_Infrastructure.Abstractions.Email;
+using Sweet_Silvia_Infrastructure.Abstractions.Payments;
 using Sweet_Silvia_Infrastructure.Abstractions.Security;
 using Sweet_Silvia_Infrastructure.Abstractions.Shipping;
 using Sweet_Silvia_Infrastructure.Abstractions.Storage;
@@ -36,16 +38,24 @@ public static class DependencyInjection
         var refreshTokenOptions = configuration.GetSection("RefreshToken").Get<RefreshTokenOptions>() ?? new RefreshTokenOptions();
         var emailVerificationOptions = configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions();
         var emailDeliveryOptions = configuration.GetSection("Email").Get<EmailDeliveryOptions>() ?? new EmailDeliveryOptions();
+        var googleAuthOptions = configuration.GetSection("Google").Get<GoogleAuthOptions>() ?? new GoogleAuthOptions();
         var olvaOptions = configuration.GetSection("Olva").Get<OlvaOptions>() ?? new OlvaOptions();
+        var izipayOptions = configuration.GetSection("Izipay").Get<IzipayOptions>() ?? new IzipayOptions();
         var fileStorageOptions = configuration.GetSection("FileStorage").Get<FileStorageOptions>() ?? new FileStorageOptions();
 
         ValidateJwt(jwtOptions);
         ValidateRefreshToken(refreshTokenOptions);
         ValidateEmail(emailVerificationOptions, emailDeliveryOptions);
+        ValidateGoogleAuth(googleAuthOptions);
+
+        static void ConfigureDbContext(DbContextOptionsBuilder options, string databaseConnectionString)
+        {
+            options.UseNpgsql(databaseConnectionString, npgsqlOptions =>
+                npgsqlOptions.EnableRetryOnFailure());
+        }
 
         services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseNpgsql(connectionString, npgsqlOptions =>
-                npgsqlOptions.EnableRetryOnFailure()));
+            ConfigureDbContext(options, connectionString));
 
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped(typeof(IRepository<>), typeof(EntityRepository<>));
@@ -56,16 +66,24 @@ public static class DependencyInjection
         services.AddSingleton(refreshTokenOptions);
         services.AddSingleton(emailVerificationOptions);
         services.AddSingleton(emailDeliveryOptions);
+        services.AddSingleton(googleAuthOptions);
         services.AddSingleton(olvaOptions);
+        services.AddSingleton(izipayOptions);
         services.AddSingleton(fileStorageOptions);
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddSingleton<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddScoped<IAuditLogWriter, AuditLogWriter>();
         services.AddSingleton<IVerificationCodeGenerator, VerificationCodeGenerator>();
+        services.AddHttpClient<IGoogleIdTokenValidator, GoogleIdTokenValidator>(client =>
+        {
+            client.BaseAddress = new Uri("https://oauth2.googleapis.com/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
 
         RegisterEmailSender(services, emailDeliveryOptions);
         RegisterOlvaCourierClient(services, olvaOptions);
+        RegisterIzipayPaymentGateway(services, izipayOptions);
         RegisterFileStorage(services, fileStorageOptions);
         RegisterAuthentication(services, jwtOptions);
 
@@ -91,6 +109,16 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(20);
             client.DefaultRequestHeaders.Add("x-api-key", options.ApiKey);
+        });
+    }
+
+    private static void RegisterIzipayPaymentGateway(IServiceCollection services, IzipayOptions options)
+    {
+        services.AddSingleton<IIzipaySignatureValidator, IzipaySignatureValidator>();
+        services.AddHttpClient<IIzipayPaymentGateway, IzipayPaymentGateway>(client =>
+        {
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(20);
         });
     }
 
@@ -125,6 +153,27 @@ public static class DependencyInjection
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.SecretKey))
                 };
             });
+    }
+
+    private static void ValidateGoogleAuth(GoogleAuthOptions options)
+    {
+        if (options.Enabled && string.IsNullOrWhiteSpace(options.ClientId))
+        {
+            throw new InvalidOperationException("Google:ClientId must be configured when Google authentication is enabled.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ClientSecret) != string.IsNullOrWhiteSpace(options.RedirectUri))
+        {
+            throw new InvalidOperationException("Google:ClientSecret and Google:RedirectUri must be configured together for authorization-code flow.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.RedirectUri) &&
+            (!Uri.TryCreate(options.RedirectUri, UriKind.Absolute, out var redirectUri) ||
+             (!string.Equals(redirectUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+              !string.Equals(redirectUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException("Google:RedirectUri must be an absolute HTTP or HTTPS URL.");
+        }
     }
 
     private static void ValidateJwt(JwtOptions options)

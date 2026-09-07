@@ -56,7 +56,7 @@ internal sealed class GetPaymentMethodByIdQueryHandler(IRepository<PaymentMethod
 {
     public Task<Result<PaymentMethodResponse>> Handle(GetPaymentMethodByIdQuery request, CancellationToken cancellationToken)
     {
-        var paymentMethod = paymentMethods.Query().FirstOrDefault(paymentMethod => paymentMethod.Id == request.Id);
+        var paymentMethod = paymentMethods.Query().FirstOrDefault(paymentMethod => paymentMethod.Id == request.Id && paymentMethod.IsActive);
         return Task.FromResult(paymentMethod is null
             ? Result.Failure<PaymentMethodResponse>(ApplicationErrors.NotFound("PaymentMethod", request.Id))
             : Result.Success(ToResponse(paymentMethod)));

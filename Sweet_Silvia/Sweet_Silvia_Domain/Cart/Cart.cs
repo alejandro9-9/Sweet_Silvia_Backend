@@ -144,6 +144,12 @@ public sealed class Cart : Entity
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 
+    public void Touch()
+    {
+        EnsureActive();
+        UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
     public void Deactivate()
     {
         IsActive = false;

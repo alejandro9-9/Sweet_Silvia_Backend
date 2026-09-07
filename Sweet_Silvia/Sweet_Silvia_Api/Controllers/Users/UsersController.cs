@@ -37,6 +37,24 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
         return this.ToActionResult(result);
     }
 
+    [Authorize(Roles = ApiRoles.AnyAuthenticated)]
+    [HttpPut("me")]
+    [HttpPatch("me")]
+    public async Task<IActionResult> UpdateMe(UpdateMyProfileRequest request, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(
+            new UpdateUserProfileCommand(
+                User.GetUserId(),
+                request.Name,
+                request.PaternalSurname,
+                request.MaternalSurname,
+                request.Phone,
+                request.Email),
+            cancellationToken);
+
+        return this.ToActionResult(result);
+    }
+
     [AllowAnonymous]
     [HttpPost]
     public async Task<IActionResult> Register(RegisterUserRequest request, CancellationToken cancellationToken)
@@ -73,6 +91,14 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     }
 
     [Authorize(Roles = ApiRoles.Administrator)]
+    [HttpPatch("{id:guid}/unblock")]
+    public async Task<IActionResult> Unblock(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new UnblockUserCommand(id), cancellationToken);
+        return this.ToActionResult(result);
+    }
+
+    [Authorize(Roles = ApiRoles.Administrator)]
     [HttpPatch("{id:guid}/role")]
     public async Task<IActionResult> ChangeRole(Guid id, ChangeUserRoleRequest request, CancellationToken cancellationToken)
     {
@@ -98,5 +124,7 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
 }
 
 public sealed record RegisterUserRequest(string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email, string Password);
+
+public sealed record UpdateMyProfileRequest(string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email);
 
 public sealed record ChangeUserRoleRequest(Guid RoleId);

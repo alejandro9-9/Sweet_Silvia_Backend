@@ -33,10 +33,7 @@ public sealed class ProductImage : Entity
             throw new ArgumentException("Product id is required.", nameof(productId));
         }
 
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            throw new ArgumentException("Product image url is required.", nameof(url));
-        }
+        ValidateUrl(url);
 
         if (order < 0)
         {
@@ -53,10 +50,7 @@ public sealed class ProductImage : Entity
             throw new ArgumentException("Product variant id is invalid.", nameof(productVariantId));
         }
 
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            throw new ArgumentException("Product image url is required.", nameof(url));
-        }
+        ValidateUrl(url);
 
         if (order < 0)
         {
@@ -68,5 +62,23 @@ public sealed class ProductImage : Entity
         AltText = altText?.Trim();
         Order = order;
         IsMain = isMain;
+    }
+
+    private static void ValidateUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new ArgumentException("Product image url is required.", nameof(url));
+        }
+
+        url = url.Trim();
+        var isLocalUpload = url.StartsWith("/uploads/", StringComparison.Ordinal);
+        var isHttpUrl = Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+        if (!isLocalUpload && !isHttpUrl)
+        {
+            throw new ArgumentException("Product image url should be an HTTP(S) URL or a local upload path.", nameof(url));
+        }
     }
 }

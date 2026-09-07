@@ -24,7 +24,7 @@ public sealed class PaymentMethod : Entity
 
     public static PaymentMethod Create(string name, PaymentMethodType type, bool requiresManualVerification, bool requiresExternalIntegration)
     {
-        Validate(name);
+        Validate(name, type, requiresManualVerification, requiresExternalIntegration);
 
         var result = new PaymentMethod(Guid.NewGuid(), name.Trim(), type, requiresManualVerification, requiresExternalIntegration, true);
         result.AddDomainEvent(new PaymentMethodCreatedEvent(result.Id));
@@ -33,7 +33,7 @@ public sealed class PaymentMethod : Entity
 
     public void Update(string name, PaymentMethodType type, bool requiresManualVerification, bool requiresExternalIntegration)
     {
-        Validate(name);
+        Validate(name, type, requiresManualVerification, requiresExternalIntegration);
 
         Name = name.Trim();
         Type = type;
@@ -48,11 +48,26 @@ public sealed class PaymentMethod : Entity
         AddDomainEvent(new PaymentMethodDeletedEvent(Id));
     }
 
-    private static void Validate(string name)
+    private static void Validate(string name, PaymentMethodType type, bool requiresManualVerification, bool requiresExternalIntegration)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("Payment method name is required.", nameof(name));
+        }
+
+        if (type == PaymentMethodType.Gateway && (requiresManualVerification || !requiresExternalIntegration))
+        {
+            throw new ArgumentException("Gateway payment methods should require external integration and should not require manual verification.");
+        }
+
+        if (type == PaymentMethodType.Manual && (!requiresManualVerification || requiresExternalIntegration))
+        {
+            throw new ArgumentException("Manual payment methods should require manual verification and should not require external integration.");
+        }
+
+        if (type == PaymentMethodType.Cash && (requiresManualVerification || requiresExternalIntegration))
+        {
+            throw new ArgumentException("Cash payment methods should not require manual verification or external integration.");
         }
     }
 }

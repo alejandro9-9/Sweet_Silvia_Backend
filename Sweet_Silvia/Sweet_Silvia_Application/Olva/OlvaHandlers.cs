@@ -19,6 +19,8 @@ internal sealed class GetOlvaAgenciesQueryHandler(IRepository<OlvaAgencyEntity> 
 {
     public Task<Result<List<CachedOlvaAgencyResponse>>> Handle(GetOlvaAgenciesQuery request, CancellationToken cancellationToken)
     {
+        var page = Math.Max(request.Page, 1);
+        var pageSize = Math.Clamp(request.PageSize, 1, 50);
         var query = olvaAgencies.Query().Where(agency => agency.IsActive).AsEnumerable();
 
         if (!string.IsNullOrWhiteSpace(request.Q))
@@ -53,7 +55,8 @@ internal sealed class GetOlvaAgenciesQueryHandler(IRepository<OlvaAgencyEntity> 
             .ThenBy(agency => agency.Province)
             .ThenBy(agency => agency.District)
             .ThenBy(agency => agency.Name)
-            .Take(80)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(OlvaAgencyMappings.ToCachedAgencyResponse)
             .ToList();
 

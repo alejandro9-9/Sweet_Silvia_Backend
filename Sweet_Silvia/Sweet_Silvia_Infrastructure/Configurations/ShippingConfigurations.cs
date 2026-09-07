@@ -1,9 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using CourierEntity = Sweet_Silvia_Domain.Courier.Courier;
+using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
+using DistrictEntity = Sweet_Silvia_Domain.District.District;
+using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 using ShipmentEntity = Sweet_Silvia_Domain.Shipment.Shipment;
 using ShipmentEventEntity = Sweet_Silvia_Domain.ShipmentEvent.ShipmentEvent;
 using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
 using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
+using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -53,6 +58,10 @@ internal sealed class ShippingRateConfiguration : IEntityTypeConfiguration<Shipp
         builder.Property(entity => entity.UpdatedAt);
         builder.HasIndex(entity => new { entity.DepartmentId, entity.ProvinceId, entity.DistrictId });
         builder.HasIndex(entity => new { entity.DestinationType, entity.ServiceType, entity.IsActive });
+        builder.HasOne<CourierEntity>().WithMany().HasForeignKey(entity => entity.CourierId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<DepartmentEntity>().WithMany().HasForeignKey(entity => entity.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ProvinceEntity>().WithMany().HasForeignKey(entity => entity.ProvinceId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<DistrictEntity>().WithMany().HasForeignKey(entity => entity.DistrictId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -77,6 +86,8 @@ internal sealed class ShipmentConfiguration : IEntityTypeConfiguration<ShipmentE
         builder.HasIndex(entity => entity.CourierId);
         builder.HasIndex(entity => entity.Status);
         builder.HasIndex(entity => entity.TrackingCode);
+        builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<CourierEntity>().WithMany().HasForeignKey(entity => entity.CourierId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -92,5 +103,6 @@ internal sealed class ShipmentEventConfiguration : IEntityTypeConfiguration<Ship
         builder.Property(entity => entity.Location).HasMaxLength(180);
         builder.Property(entity => entity.EventDate).IsRequired();
         builder.HasIndex(entity => entity.ShipmentId);
+        builder.HasOne<ShipmentEntity>().WithMany().HasForeignKey(entity => entity.ShipmentId).OnDelete(DeleteBehavior.Cascade);
     }
 }

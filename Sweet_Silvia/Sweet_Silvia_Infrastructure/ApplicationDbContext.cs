@@ -1,12 +1,15 @@
 using System.Reflection;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Sweet_Silvia_Domain.Abstractions;
 
 namespace Sweet_Silvia_Infrastructure;
 
-public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options, IPublisher? publisher = null)
     : DbContext(options), IUnitOfWork
 {
+    private readonly IPublisher? _publisher = publisher;
+
     public DbSet<Sweet_Silvia_Domain.AuditLog.AuditLog> AuditLogs => Set<Sweet_Silvia_Domain.AuditLog.AuditLog>();
     public DbSet<Sweet_Silvia_Domain.Address.Address> Addresses => Set<Sweet_Silvia_Domain.Address.Address>();
     public DbSet<Sweet_Silvia_Domain.Cart.Cart> Carts => Set<Sweet_Silvia_Domain.Cart.Cart>();
@@ -39,6 +42,34 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<Sweet_Silvia_Domain.ShippingRate.ShippingRate> ShippingRates => Set<Sweet_Silvia_Domain.ShippingRate.ShippingRate>();
     public DbSet<Sweet_Silvia_Domain.StockMovement.StockMovement> StockMovements => Set<Sweet_Silvia_Domain.StockMovement.StockMovement>();
     public DbSet<Sweet_Silvia_Domain.User.User> Users => Set<Sweet_Silvia_Domain.User.User>();
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var entitiesWithEvents = ChangeTracker.Entries<Entity>()
+            .Where(entry => entry.Entity.GetDomainEvents().Count > 0)
+            .Select(entry => entry.Entity)
+            .ToList();
+        var domainEvents = entitiesWithEvents
+            .SelectMany(entity => entity.GetDomainEvents())
+            .ToList();
+
+        var result = await base.SaveChangesAsync(cancellationToken);
+
+        if (_publisher is not null)
+        {
+            foreach (var domainEvent in domainEvents)
+            {
+                await _publisher.Publish(domainEvent, cancellationToken);
+            }
+        }
+
+        foreach (var entity in entitiesWithEvents)
+        {
+            entity.ClearDomainEvents();
+        }
+
+        return result;
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

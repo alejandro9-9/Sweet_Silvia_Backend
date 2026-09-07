@@ -4,4 +4,5 @@ public sealed record FileStorageUpload(
     string Container,
     string OriginalFileName,
     string ContentType,
-    Stream Content);
+    Stream Content,
+    bool IsPublic = true);

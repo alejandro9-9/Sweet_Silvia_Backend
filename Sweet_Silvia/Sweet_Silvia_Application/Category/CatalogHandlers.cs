@@ -65,7 +65,7 @@ internal sealed class GetCategoryByIdQueryHandler(IRepository<CategoryEntity> ca
 {
     public Task<Result<CategoryResponse>> Handle(GetCategoryByIdQuery request, CancellationToken cancellationToken)
     {
-        var category = categories.Query().FirstOrDefault(category => category.Id == request.Id);
+        var category = categories.Query().FirstOrDefault(category => category.Id == request.Id && category.IsActive);
         return Task.FromResult(category is null
             ? Result.Failure<CategoryResponse>(ApplicationErrors.NotFound("Category", request.Id))
             : Result.Success(new CategoryResponse(category.Id, category.Name, category.Description, category.IsActive)));
@@ -133,7 +133,7 @@ internal sealed class GetCollectionByIdQueryHandler(IRepository<CollectionEntity
 {
     public Task<Result<CollectionResponse>> Handle(GetCollectionByIdQuery request, CancellationToken cancellationToken)
     {
-        var collection = collections.Query().FirstOrDefault(collection => collection.Id == request.Id);
+        var collection = collections.Query().FirstOrDefault(collection => collection.Id == request.Id && collection.IsActive);
         return Task.FromResult(collection is null
             ? Result.Failure<CollectionResponse>(ApplicationErrors.NotFound("Collection", request.Id))
             : Result.Success(new CollectionResponse(collection.Id, collection.Name, collection.Description, collection.IsActive)));
@@ -233,19 +233,26 @@ internal sealed class GetProductByIdQueryHandler(IRepository<ProductEntity> prod
 {
     public Task<Result<ProductResponse>> Handle(GetProductByIdQuery request, CancellationToken cancellationToken)
     {
-        var product = products.Query().FirstOrDefault(product => product.Id == request.Id);
+        var product = products.Query().FirstOrDefault(product => product.Id == request.Id && product.IsActive);
         return Task.FromResult(product is null
             ? Result.Failure<ProductResponse>(ApplicationErrors.NotFound("Product", request.Id))
             : Result.Success(CatalogMappings.ToResponse(product)));
     }
 }
 
-internal sealed class GetProductsQueryHandler(IRepository<ProductEntity> products)
+internal sealed class GetProductsQueryHandler(
+    IRepository<ProductEntity> products,
+    IRepository<CategoryEntity> categories,
+    IRepository<CollectionEntity> collections)
     : IQueryHandler<GetProductsQuery, List<ProductResponse>>
 {
     public Task<Result<List<ProductResponse>>> Handle(GetProductsQuery request, CancellationToken cancellationToken)
     {
-        var query = products.Query();
+        var query = products.Query()
+            .Where(product =>
+                product.IsActive &&
+                categories.Query().Any(category => category.Id == product.CategoryId && category.IsActive) &&
+                (product.CollectionId == null || collections.Query().Any(collection => collection.Id == product.CollectionId && collection.IsActive)));
 
         if (request.CategoryId.HasValue)
         {
@@ -255,11 +262,6 @@ internal sealed class GetProductsQueryHandler(IRepository<ProductEntity> product
         if (request.CollectionId.HasValue)
         {
             query = query.Where(product => product.CollectionId == request.CollectionId);
-        }
-
-        if (request.OnlyActive)
-        {
-            query = query.Where(product => product.IsActive);
         }
 
         return Task.FromResult(Result.Success(query.Select(CatalogMappings.ToResponse).ToList()));
@@ -367,28 +369,35 @@ internal sealed class DecreaseProductVariantStockCommandHandler(IRepository<Prod
     }
 }
 
-internal sealed class GetProductVariantByIdQueryHandler(IRepository<ProductVariantEntity> variants)
+internal sealed class GetProductVariantByIdQueryHandler(
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductEntity> products)
     : IQueryHandler<GetProductVariantByIdQuery, ProductVariantResponse>
 {
     public Task<Result<ProductVariantResponse>> Handle(GetProductVariantByIdQuery request, CancellationToken cancellationToken)
     {
-        var variant = variants.Query().FirstOrDefault(variant => variant.Id == request.Id);
+        var variant = variants.Query().FirstOrDefault(variant =>
+            variant.Id == request.Id &&
+            variant.IsActive &&
+            products.Query().Any(product => product.Id == variant.ProductId && product.IsActive));
         return Task.FromResult(variant is null
             ? Result.Failure<ProductVariantResponse>(ApplicationErrors.NotFound("ProductVariant", request.Id))
             : Result.Success(CatalogMappings.ToResponse(variant)));
     }
 }
 
-internal sealed class GetProductVariantsByProductQueryHandler(IRepository<ProductVariantEntity> variants)
+internal sealed class GetProductVariantsByProductQueryHandler(
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductEntity> products)
     : IQueryHandler<GetProductVariantsByProductQuery, List<ProductVariantResponse>>
 {
     public Task<Result<List<ProductVariantResponse>>> Handle(GetProductVariantsByProductQuery request, CancellationToken cancellationToken)
     {
-        var query = variants.Query().Where(variant => variant.ProductId == request.ProductId);
-        if (request.OnlyActive)
-        {
-            query = query.Where(variant => variant.IsActive);
-        }
+        var query = variants.Query()
+            .Where(variant =>
+                variant.ProductId == request.ProductId &&
+                variant.IsActive &&
+                products.Query().Any(product => product.Id == variant.ProductId && product.IsActive));
 
         return Task.FromResult(Result.Success(query.Select(CatalogMappings.ToResponse).ToList()));
     }
@@ -411,6 +420,7 @@ internal sealed class CreateProductImageCommandHandler(
 
         var image = ProductImageEntity.Create(request.ProductId, request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain);
         images.Add(image);
+        CatalogMappings.NormalizeProductImages(request.ProductId, images, image.Id, request.IsMain, image);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return image.Id;
     }
@@ -440,6 +450,7 @@ internal sealed class UpdateProductImageCommandHandler(
         }
 
         image.Update(request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain);
+        CatalogMappings.NormalizeProductImages(image.ProductId, images, image.Id, request.IsMain);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -456,17 +467,28 @@ internal sealed class DeleteProductImageCommandHandler(IRepository<ProductImageE
             return Result.Failure(ApplicationErrors.NotFound("ProductImage", request.Id));
         }
 
+        var productId = image.ProductId;
         images.Remove(image);
+        CatalogMappings.NormalizeProductImages(productId, images, null, false, null, request.Id);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
 }
 
-internal sealed class GetProductImagesByProductQueryHandler(IRepository<ProductImageEntity> images)
+internal sealed class GetProductImagesByProductQueryHandler(
+    IRepository<ProductImageEntity> images,
+    IRepository<ProductEntity> products)
     : IQueryHandler<GetProductImagesByProductQuery, List<ProductImageResponse>>
 {
     public Task<Result<List<ProductImageResponse>>> Handle(GetProductImagesByProductQuery request, CancellationToken cancellationToken)
     {
+        var productExists = products.Query().Any(product => product.Id == request.ProductId && product.IsActive);
+        if (!productExists)
+        {
+            return Task.FromResult(Result.Failure<List<ProductImageResponse>>(
+                ApplicationErrors.NotFound("Product", request.ProductId)));
+        }
+
         var result = images.Query()
             .Where(image => image.ProductId == request.ProductId)
             .OrderBy(image => image.Order)
@@ -479,6 +501,49 @@ internal sealed class GetProductImagesByProductQueryHandler(IRepository<ProductI
 
 internal static class CatalogMappings
 {
+    public static void NormalizeProductImages(
+        Guid productId,
+        IRepository<ProductImageEntity> images,
+        Guid? preferredMainImageId,
+        bool forcePreferredMain,
+        ProductImageEntity? pendingImage = null,
+        Guid? excludedImageId = null)
+    {
+        var productImages = images.Query()
+            .Where(image => image.ProductId == productId && (!excludedImageId.HasValue || image.Id != excludedImageId.Value))
+            .OrderBy(image => image.Order)
+            .ThenBy(image => image.CreatedAt)
+            .ThenBy(image => image.Id)
+            .ToList();
+
+        if (pendingImage is not null && productImages.All(image => image.Id != pendingImage.Id))
+        {
+            productImages.Add(pendingImage);
+            productImages = productImages
+                .OrderBy(image => image.Order)
+                .ThenBy(image => image.CreatedAt)
+                .ThenBy(image => image.Id)
+                .ToList();
+        }
+
+        var mainImageId = forcePreferredMain
+            ? preferredMainImageId
+            : productImages.FirstOrDefault(image => image.IsMain)?.Id;
+
+        mainImageId ??= productImages.FirstOrDefault()?.Id;
+
+        for (var index = 0; index < productImages.Count; index++)
+        {
+            var image = productImages[index];
+            image.Update(
+                image.ProductVariantId,
+                image.Url,
+                image.AltText,
+                index + 1,
+                image.Id == mainImageId);
+        }
+    }
+
     public static Result ValidateProductCatalog(
         Guid categoryId,
         Guid? collectionId,

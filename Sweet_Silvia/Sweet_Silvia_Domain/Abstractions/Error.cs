@@ -9,6 +9,8 @@ public record Error
     string Message
 )
 {
+    public int? StatusCode { get; init; }
+
     public static Error None => new(string.Empty, string.Empty);
 
     public static Error NullValue => new("Error.NullValue", "The value cannot be null");

@@ -9,7 +9,7 @@ internal sealed class LocalFileStorageService(FileStorageOptions options) : IFil
         var extension = Path.GetExtension(upload.OriginalFileName).ToLowerInvariant();
         var fileName = $"{Guid.NewGuid():N}{extension}";
         var container = NormalizeContainer(upload.Container);
-        var rootPath = Path.GetFullPath(options.LocalRootPath);
+        var rootPath = Path.GetFullPath(upload.IsPublic ? options.LocalRootPath : options.PrivateLocalRootPath);
         var directory = Path.Combine(rootPath, container);
         Directory.CreateDirectory(directory);
 
@@ -20,12 +20,62 @@ internal sealed class LocalFileStorageService(FileStorageOptions options) : IFil
         }
 
         var key = $"{container}/{fileName}".Replace("\\", "/", StringComparison.Ordinal);
-        var url = string.IsNullOrWhiteSpace(options.PublicBaseUrl)
-            ? $"/uploads/{key}"
-            : $"{options.PublicBaseUrl.TrimEnd('/')}/uploads/{key}";
+        var url = upload.IsPublic
+            ? string.IsNullOrWhiteSpace(options.PublicBaseUrl)
+                ? $"/uploads/{key}"
+                : $"{options.PublicBaseUrl.TrimEnd('/')}/uploads/{key}"
+            : key;
 
         return new FileStorageResult(url, key);
     }
+
+    public async Task<FileStorageReadResult?> OpenPrivateReadAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (!TryResolvePrivatePath(key, out var fullPath))
+        {
+            return null;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            return null;
+        }
+
+        var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
+        await Task.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+        return new FileStorageReadResult(stream, GetContentType(fullPath));
+    }
+
+    private bool TryResolvePrivatePath(string key, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        var normalizedKey = key.Trim().Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        var segments = normalizedKey.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (Path.IsPathRooted(normalizedKey) || segments.Any(segment => segment is "." or ".."))
+        {
+            return false;
+        }
+
+        var root = Path.GetFullPath(options.PrivateLocalRootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        fullPath = Path.GetFullPath(Path.Combine(root, normalizedKey));
+        return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetContentType(string path)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".pdf" => "application/pdf",
+            _ => "application/octet-stream"
+        };
 
     private static string NormalizeContainer(string container)
     {

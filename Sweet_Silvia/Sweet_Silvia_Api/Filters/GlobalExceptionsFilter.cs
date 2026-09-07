@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.EntityFrameworkCore;
 
 namespace Sweet_Silvia_Api.Filters;
 
@@ -12,6 +13,7 @@ public sealed class GlobalExceptionsFilter(ILogger<GlobalExceptionsFilter> logge
         {
             UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
             KeyNotFoundException => StatusCodes.Status404NotFound,
+            DbUpdateConcurrencyException => StatusCodes.Status409Conflict,
             ArgumentException => StatusCodes.Status400BadRequest,
             InvalidOperationException => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status500InternalServerError
@@ -24,7 +26,7 @@ public sealed class GlobalExceptionsFilter(ILogger<GlobalExceptionsFilter> logge
             Title = status == StatusCodes.Status500InternalServerError
                 ? "An unexpected error occurred."
                 : "The request could not be completed.",
-            Detail = context.Exception.Message
+            Detail = status >= StatusCodes.Status500InternalServerError ? null : context.Exception.Message
         })
         {
             StatusCode = status

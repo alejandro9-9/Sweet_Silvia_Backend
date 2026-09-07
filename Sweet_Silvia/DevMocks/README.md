@@ -33,7 +33,7 @@ El seed incluye 25 departamentos, 38 provincias y 52 distritos. Para Lima se agr
 Desde la raiz de la solucion:
 
 ```powershell
-psql "Host=localhost;Port=5432;Database=sweet_silvia_dev;Username=postgres;Password=postgres" -f DevMocks/seed-dev.sql
+psql "Host=localhost;Port=5433;Database=sweet_silvia;Username=postgres;Password=postgres" -f DevMocks/seed-dev.sql
 ```
 
 Si usas Docker, la base configurada en `docker-compose.yml` se llama `sweet_silvia`:
@@ -46,5 +46,5 @@ docker exec sweet-silvia-db psql -U postgres -d sweet_silvia -f /tmp/seed-dev.sq
 ## Limpiar mocks
 
 ```powershell
-psql "Host=localhost;Port=5432;Database=sweet_silvia_dev;Username=postgres;Password=postgres" -f DevMocks/reset-dev.sql
+psql "Host=localhost;Port=5433;Database=sweet_silvia;Username=postgres;Password=postgres" -f DevMocks/reset-dev.sql
 ```

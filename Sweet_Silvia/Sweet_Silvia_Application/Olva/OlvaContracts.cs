@@ -74,7 +74,9 @@ public sealed record GetOlvaAgenciesQuery(
     string? Q,
     string? Department,
     string? Province,
-    string? District) : IQuery<List<CachedOlvaAgencyResponse>>;
+    string? District,
+    int Page = 1,
+    int PageSize = 50) : IQuery<List<CachedOlvaAgencyResponse>>;
 
 public sealed record GetCachedOlvaDepartmentsQuery : IQuery<List<string>>;
 

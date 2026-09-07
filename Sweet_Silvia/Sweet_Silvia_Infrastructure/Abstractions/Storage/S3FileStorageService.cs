@@ -26,11 +26,41 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
 
         await s3Client.PutObjectAsync(request, cancellationToken);
 
-        var url = string.IsNullOrWhiteSpace(options.S3PublicBaseUrl)
-            ? $"https://{options.S3BucketName}.s3.{options.S3Region}.amazonaws.com/{key}"
-            : $"{options.S3PublicBaseUrl.TrimEnd('/')}/{key}";
+        var url = upload.IsPublic
+            ? string.IsNullOrWhiteSpace(options.S3PublicBaseUrl)
+                ? $"https://{options.S3BucketName}.s3.{options.S3Region}.amazonaws.com/{key}"
+                : $"{options.S3PublicBaseUrl.TrimEnd('/')}/{key}"
+            : key;
 
         return new FileStorageResult(url, key);
+    }
+
+    public async Task<FileStorageReadResult?> OpenPrivateReadAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (!IsSafeKey(key))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var response = await s3Client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = options.S3BucketName,
+                Key = key.Trim().Replace('\\', '/')
+            }, cancellationToken);
+
+            var content = new MemoryStream();
+            await response.ResponseStream.CopyToAsync(content, cancellationToken);
+            content.Position = 0;
+            return new FileStorageReadResult(content, string.IsNullOrWhiteSpace(response.Headers.ContentType)
+                ? "application/octet-stream"
+                : response.Headers.ContentType);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
     }
 
     private static string NormalizeContainer(string container)
@@ -44,5 +74,17 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
             .Trim()
             .Replace('\\', '/')
             .Split('/', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static bool IsSafeKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        var normalizedKey = key.Trim().Replace('\\', '/');
+        return !normalizedKey.StartsWith('/') &&
+               normalizedKey.Split('/', StringSplitOptions.RemoveEmptyEntries).All(segment => segment is not "." and not "..");
     }
 }

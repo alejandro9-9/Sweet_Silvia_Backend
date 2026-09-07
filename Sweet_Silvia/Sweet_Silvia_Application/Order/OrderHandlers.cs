@@ -1,33 +1,378 @@
 using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Common;
+using Sweet_Silvia_Application.Courier;
 using Sweet_Silvia_Application.OrderItem;
 using Sweet_Silvia_Application.OrderStatusHistory;
+using Sweet_Silvia_Application.ShippingRate;
 using Sweet_Silvia_Domain.Abstractions;
+using Sweet_Silvia_Domain.CartAppliedCoupon;
+using Sweet_Silvia_Domain.CartItem;
+using Sweet_Silvia_Domain.Coupon;
+using Sweet_Silvia_Domain.Courier;
+using Sweet_Silvia_Domain.Order;
+using Sweet_Silvia_Domain.Shared.Enums;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
+using AddressEntity = Sweet_Silvia_Domain.Address.Address;
+using CartAppliedCouponEntity = Sweet_Silvia_Domain.CartAppliedCoupon.CartAppliedCoupon;
+using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
+using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
+using CouponEntity = Sweet_Silvia_Domain.Coupon.Coupon;
+using CouponRestrictionEntity = Sweet_Silvia_Domain.CouponRestriction.CouponRestriction;
+using CouponUsageEntity = Sweet_Silvia_Domain.CouponUsage.CouponUsage;
+using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
+using CourierEntity = Sweet_Silvia_Domain.Courier.Courier;
+using ProductEntity = Sweet_Silvia_Domain.Product.Product;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
+using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
 using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
 using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory;
 
 namespace Sweet_Silvia_Application.Order;
 
-internal sealed class CreateOrderCommandHandler(IRepository<OrderEntity> orders, IUnitOfWork unitOfWork)
+internal sealed class CreateOrderCommandHandler(
+    IRepository<OrderEntity> orders,
+    IRepository<OrderItemEntity> orderItems,
+    IRepository<AddressEntity> addresses,
+    IRepository<CartEntity> carts,
+    IRepository<CartItemEntity> cartItems,
+    IRepository<CartAppliedCouponEntity> appliedCoupons,
+    IRepository<CouponEntity> coupons,
+    IRepository<CouponRestrictionEntity> restrictions,
+    IRepository<CouponUsageEntity> couponUsages,
+    IRepository<ProductEntity> products,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<DepartmentEntity> departments,
+    IRepository<CourierEntity> couriers,
+    IRepository<ShippingRateEntity> shippingRates,
+    IUnitOfWork unitOfWork)
     : ICommandHandler<CreateOrderCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
     {
+        const string storeCurrency = "PEN";
+
+        var address = await addresses.GetByIdAsync(request.AddressId, cancellationToken);
+        if (address is null || !address.IsActive || address.UserId != request.UserId)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", request.AddressId));
+        }
+
+        var department = departments.Query()
+            .FirstOrDefault(item => item.Id == address.DepartmentId && item.IsActive);
+        if (department is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", address.DepartmentId));
+        }
+
+        var shippingRate = await shippingRates.GetByIdAsync(request.ShippingRateId, cancellationToken);
+        if (shippingRate is null || !shippingRate.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("ShippingRate", request.ShippingRateId));
+        }
+
+        var courier = await couriers.GetByIdAsync(shippingRate.CourierId, cancellationToken);
+        if (courier is null || !courier.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.CourierUnavailable",
+                "The selected shipping service is currently unavailable."));
+        }
+
+        if (courier.Type != shippingRate.CourierType ||
+            (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.InvalidCourier",
+                "The selected shipping service is not compatible with the destination."));
+        }
+
+        if (shippingRate.DestinationType != department.DestinationType ||
+            !shippingRate.AppliesTo(address.DepartmentId, address.ProvinceId, address.DistrictId, department.DestinationType))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.InvalidRate",
+                "The selected shipping rate does not apply to the address."));
+        }
+
+        var cart = carts.Query().FirstOrDefault(item => item.UserId == request.UserId && item.IsActive);
+        if (cart is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Cart"));
+        }
+
+        var currentCartItems = cartItems.Query()
+            .Where(item => item.CartId == cart.Id)
+            .ToList();
+        if (currentCartItems.Count == 0)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict("Order.EmptyCart", "The cart does not contain items."));
+        }
+
+        var variantIds = currentCartItems.Select(item => item.ProductVariantId).ToList();
+        var currentVariants = variants.Query()
+            .Where(item => variantIds.Contains(item.Id))
+            .ToDictionary(item => item.Id);
+        var productIds = currentVariants.Values.Select(item => item.ProductId).Distinct().ToList();
+        var currentProducts = products.Query()
+            .Where(item => productIds.Contains(item.Id))
+            .ToDictionary(item => item.Id);
+        var lines = new List<CheckoutLine>();
+
+        foreach (var cartItem in currentCartItems)
+        {
+            if (!currentVariants.TryGetValue(cartItem.ProductVariantId, out var variant) ||
+                !variant.IsActive ||
+                !currentProducts.TryGetValue(variant.ProductId, out var product) ||
+                !product.IsActive)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Order.InvalidCartItem",
+                    "The cart contains an inactive or unavailable product."));
+            }
+
+            if (variant.PhysicalStock < cartItem.Quantity)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Stock.NotEnough",
+                    $"Product variant '{variant.Id}' does not have enough stock."));
+            }
+
+            var unitPrice = variant.Price ?? product.BasePrice;
+            if (unitPrice.Currency != storeCurrency)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Order.UnsupportedCurrency",
+                    $"All store products must use {storeCurrency}."));
+            }
+
+            lines.Add(new CheckoutLine(cartItem, variant, product, unitPrice.Amount));
+        }
+
+        var cartCoupons = appliedCoupons.Query()
+            .Where(item => item.CartId == cart.Id)
+            .ToList();
+        if (request.CouponId.HasValue && !cartCoupons.Any(item => item.CouponId == request.CouponId.Value))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Coupon.NotAppliedToCart",
+                "The selected coupon is not applied to the current cart."));
+        }
+
+        var selectedCartCoupons = request.CouponId.HasValue
+            ? cartCoupons.Where(item => item.CouponId == request.CouponId.Value).ToList()
+            : cartCoupons;
+        if (selectedCartCoupons.Count > 1)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Coupon.MultipleCouponsNotSupported",
+                "Only one coupon can be applied to an order."));
+        }
+
+        var selectedCoupons = new List<(CartAppliedCouponEntity Applied, CouponEntity Coupon, List<CouponRestrictionEntity> Restrictions)>();
+
+        foreach (var cartCoupon in selectedCartCoupons)
+        {
+            var coupon = await coupons.GetByIdAsync(cartCoupon.CouponId, cancellationToken);
+            if (coupon is null || !coupon.IsActive || DateTimeOffset.UtcNow < coupon.StartDate || DateTimeOffset.UtcNow > coupon.EndDate)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.Invalid", "A coupon applied to the cart is no longer valid."));
+            }
+
+            if (coupon.MaximumTotalUses.HasValue &&
+                couponUsages.Query().Count(item => item.CouponId == coupon.Id) >= coupon.MaximumTotalUses.Value)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "A coupon has reached its total usage limit."));
+            }
+
+            if (coupon.MaximumUsesPerUser.HasValue &&
+                couponUsages.Query().Count(item => item.CouponId == coupon.Id && item.UserId == request.UserId) >= coupon.MaximumUsesPerUser.Value)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "A coupon has already been used by this user."));
+            }
+
+            selectedCoupons.Add((
+                cartCoupon,
+                coupon,
+                restrictions.Query().Where(item => item.CouponId == coupon.Id).ToList()));
+        }
+
+        foreach (var selectedCoupon in selectedCoupons)
+        {
+            if (!ApplyCoupon(selectedCoupon.Applied, selectedCoupon.Coupon, selectedCoupon.Restrictions, lines))
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Coupon.NotApplicable",
+                    "The selected coupon does not apply to the current cart."));
+            }
+        }
+
+        var subtotal = Money.Create(lines.Sum(item => item.UnitPrice * item.Quantity), storeCurrency);
+        var discountTotal = Money.Create(lines.Sum(item => item.DiscountAmount), storeCurrency);
+        var baseShippingCost = shippingRate.CalculateCost(subtotal);
+        var totalQuantity = lines.Sum(item => item.Quantity);
+        var volumePricing = ShippingVolumeCalculator.Calculate(
+            department.DestinationType,
+            [new ShippingPackageItem(totalQuantity, null, null, null, null)]);
+        var shippingCost = Money.Create(baseShippingCost.Amount + volumePricing.Surcharge, storeCurrency);
+        var total = Money.Create(subtotal.Amount - discountTotal.Amount + shippingCost.Amount, storeCurrency);
+
         var order = OrderEntity.Create(
             request.UserId,
             request.AddressId,
-            request.CouponId,
-            Money.Create(request.Subtotal, request.Currency),
-            Money.Create(request.DiscountTotal, request.Currency),
-            Money.Create(request.ShippingCost, request.Currency),
-            Money.Create(request.Total, request.Currency));
+            selectedCoupons.FirstOrDefault(item => item.Coupon.Scope == CouponScope.Order).Coupon?.Id ?? selectedCoupons.FirstOrDefault().Coupon?.Id,
+            selectedCoupons.FirstOrDefault().Applied?.AppliedQuantity,
+            subtotal,
+            discountTotal,
+            shippingCost,
+            total);
 
         orders.Add(order);
+        foreach (var line in lines)
+        {
+            AddOrderItemSnapshot(order, line, line.DiscountedQuantity, line.DiscountAmount, orderItems, storeCurrency);
+            AddOrderItemSnapshot(order, line, line.Quantity - line.DiscountedQuantity, 0m, orderItems, storeCurrency);
+        }
+
+        foreach (var cartItem in currentCartItems)
+        {
+            cartItems.Remove(cartItem);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return order.Id;
     }
+
+    private static bool ApplyCoupon(
+        CartAppliedCouponEntity appliedCoupon,
+        CouponEntity coupon,
+        List<CouponRestrictionEntity> couponRestrictions,
+        List<CheckoutLine> lines)
+    {
+        var candidates = lines
+            .SelectMany((line, index) =>
+            {
+                if (coupon.Scope == CouponScope.Item && line.CartItem.Id != appliedCoupon.CartItemId)
+                {
+                    return [];
+                }
+
+                var quantity = coupon.Scope == CouponScope.Item
+                    ? Math.Min(appliedCoupon.AppliedQuantity ?? line.Quantity, line.Quantity)
+                    : line.Quantity;
+
+                return MatchesRestrictions(line, couponRestrictions)
+                    ? Enumerable.Repeat(new EligibleUnit(index, line.UnitPrice), quantity)
+                    : [];
+            })
+            .ToList();
+
+        if (coupon.MinimumItemsQuantity.HasValue && candidates.Count < coupon.MinimumItemsQuantity.Value)
+        {
+            return false;
+        }
+
+        var eligibleSubtotal = candidates.Sum(item => item.UnitPrice);
+        if (coupon.MinimumPurchaseAmount.HasValue && eligibleSubtotal < coupon.MinimumPurchaseAmount.Value)
+        {
+            return false;
+        }
+
+        var selected = coupon.MaximumDiscountedItemsQuantity.HasValue
+            ? coupon.ApplicationStrategy switch
+            {
+                CouponApplicationStrategy.MostExpensive => candidates.OrderByDescending(item => item.UnitPrice).Take(coupon.MaximumDiscountedItemsQuantity.Value).ToList(),
+                CouponApplicationStrategy.Cheapest => candidates.OrderBy(item => item.UnitPrice).Take(coupon.MaximumDiscountedItemsQuantity.Value).ToList(),
+                _ => candidates.Take(coupon.MaximumDiscountedItemsQuantity.Value).ToList()
+            }
+            : candidates;
+
+        var selectedSubtotal = selected.Sum(item => item.UnitPrice);
+        if (selectedSubtotal <= 0)
+        {
+            return false;
+        }
+
+        var discount = coupon.DiscountType == DiscountType.Percentage
+            ? selectedSubtotal * coupon.DiscountValue / 100m
+            : coupon.Scope == CouponScope.Item
+                ? coupon.DiscountValue * selected.Count
+                : coupon.DiscountValue;
+        discount = Math.Min(discount, selectedSubtotal);
+
+        var selectedByLine = selected
+            .GroupBy(item => item.LineIndex)
+            .Select(group => (LineIndex: group.Key, Amount: group.Sum(item => item.UnitPrice), Quantity: group.Count()))
+            .ToList();
+        var remainingDiscount = discount;
+        for (var index = 0; index < selectedByLine.Count; index++)
+        {
+            var allocation = index == selectedByLine.Count - 1
+                ? remainingDiscount
+                : discount * selectedByLine[index].Amount / selectedSubtotal;
+            var line = lines[selectedByLine[index].LineIndex];
+            var maximumAdditionalDiscount = line.UnitPrice * line.Quantity - line.DiscountAmount;
+            var appliedAmount = Math.Min(Math.Max(allocation, 0m), maximumAdditionalDiscount);
+            line.DiscountAmount += appliedAmount;
+            line.DiscountedQuantity += selectedByLine[index].Quantity;
+            remainingDiscount -= appliedAmount;
+        }
+
+        return discount > 0;
+    }
+
+    private static void AddOrderItemSnapshot(
+        OrderEntity order,
+        CheckoutLine line,
+        int quantity,
+        decimal discountAmount,
+        IRepository<OrderItemEntity> orderItems,
+        string currency)
+    {
+        if (quantity <= 0)
+        {
+            return;
+        }
+
+        var unitDiscount = Money.Create(Math.Min(line.UnitPrice, discountAmount / quantity), currency);
+        orderItems.Add(OrderItemEntity.Create(
+            order.Id,
+            line.Variant.Id,
+            line.Product.Name,
+            line.Variant.Sku.Value,
+            line.Variant.Size,
+            line.Variant.Color,
+            quantity,
+            Money.Create(line.UnitPrice, currency),
+            unitDiscount,
+            Money.Create((line.UnitPrice - unitDiscount.Amount) * quantity, currency)));
+    }
+
+    private static bool MatchesRestrictions(CheckoutLine line, List<CouponRestrictionEntity> restrictions)
+    {
+        return restrictions.Count == 0 || restrictions.Any(restriction =>
+            restriction.CategoryId == line.Product.CategoryId ||
+            restriction.ProductId == line.Product.Id ||
+            restriction.ProductVariantId == line.Variant.Id ||
+            restriction.CollectionId == line.Product.CollectionId);
+    }
+
+    private sealed class CheckoutLine(
+        CartItemEntity cartItem,
+        ProductVariantEntity variant,
+        ProductEntity product,
+        decimal unitPrice)
+    {
+        public CartItemEntity CartItem { get; } = cartItem;
+        public ProductVariantEntity Variant { get; } = variant;
+        public ProductEntity Product { get; } = product;
+        public decimal UnitPrice { get; } = unitPrice;
+        public int Quantity => CartItem.Quantity;
+        public decimal DiscountAmount { get; set; }
+        public int DiscountedQuantity { get; set; }
+    }
+
+    private sealed record EligibleUnit(int LineIndex, decimal UnitPrice);
 }
 
 internal sealed class AddOrderItemCommandHandler(
@@ -70,6 +415,13 @@ internal sealed class ChangeOrderStatusCommandHandler(
 {
     public async Task<Result> Handle(ChangeOrderStatusCommand request, CancellationToken cancellationToken)
     {
+        if (request.Status == OrderStatus.Paid)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Order.PaymentConfirmationRequired",
+                "An order can only be marked as paid by the payment confirmation flow."));
+        }
+
         var order = await orders.GetByIdAsync(request.OrderId, cancellationToken);
         if (order is null)
         {
@@ -158,6 +510,7 @@ internal static class OrderMappings
             order.UserId,
             order.AddressId,
             order.CouponId,
+            order.CouponAppliedQuantity,
             order.Status,
             order.Subtotal.Amount,
             order.DiscountTotal.Amount,

@@ -1,8 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using AddressEntity = Sweet_Silvia_Domain.Address.Address;
+using CouponEntity = Sweet_Silvia_Domain.Coupon.Coupon;
 using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
 using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
+using UserEntity = Sweet_Silvia_Domain.User.User;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -15,6 +19,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<OrderEntity>
         builder.Property(entity => entity.UserId).IsRequired();
         builder.Property(entity => entity.AddressId).IsRequired();
         builder.Property(entity => entity.CouponId);
+        builder.Property(entity => entity.CouponAppliedQuantity);
         builder.Property(entity => entity.Status).HasConversion<string>().IsRequired().HasMaxLength(40);
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Property(entity => entity.UpdatedAt);
@@ -27,6 +32,10 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<OrderEntity>
         builder.HasIndex(entity => entity.AddressId);
         builder.HasIndex(entity => entity.CouponId);
         builder.HasIndex(entity => entity.Status);
+        builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<AddressEntity>().WithMany().HasForeignKey(entity => entity.AddressId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<CouponEntity>().WithMany().HasForeignKey(entity => entity.CouponId).OnDelete(DeleteBehavior.Restrict);
+        builder.Property<uint>("xmin").IsRowVersion();
     }
 }
 
@@ -48,6 +57,8 @@ internal sealed class OrderItemConfiguration : IEntityTypeConfiguration<OrderIte
         builder.Property(entity => entity.Subtotal).HasConversion(new MoneyConverter()).IsRequired().HasMaxLength(40);
         builder.HasIndex(entity => entity.OrderId);
         builder.HasIndex(entity => entity.ProductVariantId);
+        builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<ProductVariantEntity>().WithMany().HasForeignKey(entity => entity.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -64,5 +75,7 @@ internal sealed class OrderStatusHistoryConfiguration : IEntityTypeConfiguration
         builder.Property(entity => entity.ChangedAt).IsRequired();
         builder.Property(entity => entity.Observation).HasMaxLength(500);
         builder.HasIndex(entity => entity.OrderId);
+        builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.ChangedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 }

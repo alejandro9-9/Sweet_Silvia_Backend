@@ -78,6 +78,10 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DistrictId");
+
+                    b.HasIndex("ProvinceId");
+
                     b.HasIndex("UserId");
 
                     b.HasIndex("DepartmentId", "ProvinceId", "DistrictId");
@@ -203,6 +207,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasIndex("CartId");
 
+                    b.HasIndex("CartItemId");
+
                     b.HasIndex("CouponId");
 
                     b.ToTable("CartAppliedCoupons", (string)null);
@@ -230,6 +236,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProductVariantId");
 
                     b.HasIndex("CartId", "ProductVariantId")
                         .IsUnique();
@@ -428,6 +436,10 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasIndex("OrderId");
 
+                    b.HasIndex("OrderItemId");
+
+                    b.HasIndex("UserId");
+
                     b.HasIndex("CouponId", "UserId");
 
                     b.ToTable("CouponUsages", (string)null);
@@ -587,6 +599,9 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.Property<Guid>("AddressId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("CouponAppliedQuantity")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("CouponId")
                         .HasColumnType("uuid");
 
@@ -623,6 +638,12 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -726,6 +747,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ChangedByUserId");
+
                     b.HasIndex("OrderId");
 
                     b.ToTable("OrderStatusHistories", (string)null);
@@ -753,6 +776,13 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
+
+                    b.Property<DateTimeOffset?>("GatewayExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GatewayTransactionId")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
 
                     b.Property<string>("Observation")
                         .HasMaxLength(500)
@@ -785,9 +815,20 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
 
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("OrderId");
+                    b.HasIndex("GatewayTransactionId")
+                        .IsUnique();
+
+                    b.HasIndex("OrderId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'PendingGateway'");
 
                     b.HasIndex("PaymentMethodId");
 
@@ -1022,6 +1063,12 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -1302,6 +1349,12 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CourierId");
+
+                    b.HasIndex("DistrictId");
+
+                    b.HasIndex("ProvinceId");
+
                     b.HasIndex("DepartmentId", "ProvinceId", "DistrictId");
 
                     b.HasIndex("DestinationType", "ServiceType", "IsActive");
@@ -1367,6 +1420,10 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("GoogleSubject")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.Property<string>("MaternalSurname")
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
@@ -1377,7 +1434,6 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasColumnType("character varying(120)");
 
                     b.Property<string>("PasswordHash")
-                        .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
@@ -1387,7 +1443,6 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasColumnType("character varying(120)");
 
                     b.Property<string>("Phone")
-                        .IsRequired()
                         .HasMaxLength(12)
                         .HasColumnType("character varying(12)");
 
@@ -1407,7 +1462,345 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
+                    b.HasIndex("GoogleSubject")
+                        .IsUnique()
+                        .HasFilter("\"GoogleSubject\" IS NOT NULL");
+
+                    b.HasIndex("RoleId");
+
                     b.ToTable("Users", (string)null);
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Address.Address", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Department.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.District.District", null)
+                        .WithMany()
+                        .HasForeignKey("DistrictId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Province.Province", null)
+                        .WithMany()
+                        .HasForeignKey("ProvinceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Cart.Cart", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.CartAppliedCoupon.CartAppliedCoupon", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Cart.Cart", null)
+                        .WithMany()
+                        .HasForeignKey("CartId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.CartItem.CartItem", null)
+                        .WithMany()
+                        .HasForeignKey("CartItemId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
+                        .WithMany()
+                        .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.CartItem.CartItem", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Cart.Cart", null)
+                        .WithMany()
+                        .HasForeignKey("CartId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.ProductVariant.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.CouponRestriction.CouponRestriction", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Category.Category", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.Collection.Collection", null)
+                        .WithMany()
+                        .HasForeignKey("CollectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
+                        .WithMany()
+                        .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Product.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.ProductVariant.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.CouponUsage.CouponUsage", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
+                        .WithMany()
+                        .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.OrderItem.OrderItem", null)
+                        .WithMany()
+                        .HasForeignKey("OrderItemId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Order.Order", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Address.Address", null)
+                        .WithMany()
+                        .HasForeignKey("AddressId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
+                        .WithMany()
+                        .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.OrderItem.OrderItem", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.ProductVariant.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("ChangedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Payment.Payment", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.PaymentMethod.PaymentMethod", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentMethodId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.PaymentReceipt.PaymentReceipt", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Payment.Payment", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.PaymentReview.PaymentReview", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Payment.Payment", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Product.Product", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Category.Category", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Collection.Collection", null)
+                        .WithMany()
+                        .HasForeignKey("CollectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.ProductImage.ProductImage", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Product.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.ProductVariant.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.ProductVariant.ProductVariant", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Product.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.RefreshToken.RefreshToken", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.User.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.Shipment.Shipment", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Courier.Courier", null)
+                        .WithMany()
+                        .HasForeignKey("CourierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.ShipmentEvent.ShipmentEvent", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Shipment.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.ShippingRate.ShippingRate", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Courier.Courier", null)
+                        .WithMany()
+                        .HasForeignKey("CourierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.Department.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Sweet_Silvia_Domain.District.District", null)
+                        .WithMany()
+                        .HasForeignKey("DistrictId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.Province.Province", null)
+                        .WithMany()
+                        .HasForeignKey("ProvinceId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.StockMovement.StockMovement", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Order.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.ProductVariant.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Sweet_Silvia_Domain.User.User", b =>
+                {
+                    b.HasOne("Sweet_Silvia_Domain.Role.Role", null)
+                        .WithMany()
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

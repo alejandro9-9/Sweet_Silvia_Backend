@@ -25,9 +25,11 @@ public sealed class OlvaController(ISender sender) : ControllerBase
         [FromQuery] string? department,
         [FromQuery] string? province,
         [FromQuery] string? district,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
     {
-        return this.ToActionResult(await sender.Send(new GetOlvaAgenciesQuery(q, department, province, district), cancellationToken));
+        return this.ToActionResult(await sender.Send(new GetOlvaAgenciesQuery(q, department, province, district, page, pageSize), cancellationToken));
     }
 
     [HttpGet("cached-locations/departments")]

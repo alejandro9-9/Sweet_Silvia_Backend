@@ -60,6 +60,11 @@ public sealed class Shipment : Entity
             throw new ArgumentException("Tracking code is required.", nameof(trackingCode));
         }
 
+        if (Status != ShipmentStatus.Registered && !IsValidTransition(Status, ShipmentStatus.Registered))
+        {
+            throw new InvalidOperationException($"Shipment cannot be registered from {Status}.");
+        }
+
         Status = ShipmentStatus.Registered;
         TrackingCode = trackingCode.Trim();
         ExternalShipmentCode = externalShipmentCode?.Trim();
@@ -70,6 +75,11 @@ public sealed class Shipment : Entity
 
     public void ChangeStatus(ShipmentStatus status, string? observation = null)
     {
+        if (!IsValidTransition(Status, status))
+        {
+            throw new InvalidOperationException($"Shipment cannot change from {Status} to {status}.");
+        }
+
         Status = status;
         Observation = observation;
 
@@ -79,5 +89,23 @@ public sealed class Shipment : Entity
         }
 
         AddDomainEvent(new ShipmentUpdatedEvent(Id));
+    }
+
+    private static bool IsValidTransition(ShipmentStatus current, ShipmentStatus next)
+    {
+        if (current == next)
+        {
+            return false;
+        }
+
+        return current switch
+        {
+            ShipmentStatus.Pending => next is ShipmentStatus.Coordinated or ShipmentStatus.Registered or ShipmentStatus.Cancelled or ShipmentStatus.Observed,
+            ShipmentStatus.Coordinated => next is ShipmentStatus.Registered or ShipmentStatus.Cancelled or ShipmentStatus.Observed,
+            ShipmentStatus.Registered => next is ShipmentStatus.InTransit or ShipmentStatus.Cancelled or ShipmentStatus.Observed,
+            ShipmentStatus.InTransit => next is ShipmentStatus.Delivered or ShipmentStatus.Observed,
+            ShipmentStatus.Observed => next is ShipmentStatus.Coordinated or ShipmentStatus.Registered or ShipmentStatus.Cancelled,
+            _ => false
+        };
     }
 }

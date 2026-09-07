@@ -3,6 +3,13 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using CouponEntity = Sweet_Silvia_Domain.Coupon.Coupon;
 using CouponRestrictionEntity = Sweet_Silvia_Domain.CouponRestriction.CouponRestriction;
 using CouponUsageEntity = Sweet_Silvia_Domain.CouponUsage.CouponUsage;
+using CategoryEntity = Sweet_Silvia_Domain.Category.Category;
+using CollectionEntity = Sweet_Silvia_Domain.Collection.Collection;
+using OrderEntity = Sweet_Silvia_Domain.Order.Order;
+using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
+using ProductEntity = Sweet_Silvia_Domain.Product.Product;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
+using UserEntity = Sweet_Silvia_Domain.User.User;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -47,6 +54,11 @@ internal sealed class CouponRestrictionConfiguration : IEntityTypeConfiguration<
         builder.HasIndex(entity => entity.ProductId);
         builder.HasIndex(entity => entity.ProductVariantId);
         builder.HasIndex(entity => entity.CollectionId);
+        builder.HasOne<CouponEntity>().WithMany().HasForeignKey(entity => entity.CouponId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<CategoryEntity>().WithMany().HasForeignKey(entity => entity.CategoryId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ProductEntity>().WithMany().HasForeignKey(entity => entity.ProductId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ProductVariantEntity>().WithMany().HasForeignKey(entity => entity.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<CollectionEntity>().WithMany().HasForeignKey(entity => entity.CollectionId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -66,5 +78,9 @@ internal sealed class CouponUsageConfiguration : IEntityTypeConfiguration<Coupon
         builder.Property(entity => entity.UsedAt).IsRequired();
         builder.HasIndex(entity => new { entity.CouponId, entity.UserId });
         builder.HasIndex(entity => entity.OrderId);
+        builder.HasOne<CouponEntity>().WithMany().HasForeignKey(entity => entity.CouponId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<OrderItemEntity>().WithMany().HasForeignKey(entity => entity.OrderItemId).OnDelete(DeleteBehavior.Restrict);
     }
 }

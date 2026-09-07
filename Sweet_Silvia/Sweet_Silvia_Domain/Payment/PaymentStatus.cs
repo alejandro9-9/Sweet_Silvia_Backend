@@ -6,5 +6,6 @@ public enum PaymentStatus
     InReview = 2,
     Approved = 3,
     Rejected = 4,
-    Voided = 5
+    Voided = 5,
+    PendingGateway = 6
 }

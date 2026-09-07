@@ -1,6 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using AddressEntity = Sweet_Silvia_Domain.Address.Address;
+using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
+using DistrictEntity = Sweet_Silvia_Domain.District.District;
+using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
+using UserEntity = Sweet_Silvia_Domain.User.User;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -25,5 +29,9 @@ internal sealed class AddressConfiguration : IEntityTypeConfiguration<AddressEnt
         builder.Property(entity => entity.UpdatedAt);
         builder.HasIndex(entity => entity.UserId);
         builder.HasIndex(entity => new { entity.DepartmentId, entity.ProvinceId, entity.DistrictId });
+        builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<DepartmentEntity>().WithMany().HasForeignKey(entity => entity.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ProvinceEntity>().WithMany().HasForeignKey(entity => entity.ProvinceId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<DistrictEntity>().WithMany().HasForeignKey(entity => entity.DistrictId).OnDelete(DeleteBehavior.Restrict);
     }
 }

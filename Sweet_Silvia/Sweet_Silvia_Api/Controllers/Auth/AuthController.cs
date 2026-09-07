@@ -1,19 +1,22 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
+using Sweet_Silvia_Application.Auth;
 using Sweet_Silvia_Application.RefreshToken;
 
 namespace Sweet_Silvia_Api.Controllers.Auth;
 
 [ApiController]
 [Route("api/auth")]
-public sealed class AuthController(ISender sender, IWebHostEnvironment environment) : ControllerBase
+public sealed class AuthController(ISender sender, IWebHostEnvironment environment, IConfiguration configuration) : ControllerBase
 {
     private const string RefreshTokenCookieName = "sweet-silvia-refresh-token";
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
@@ -31,6 +34,45 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
+    [HttpPost("google")]
+    public async Task<IActionResult> GoogleLogin(GoogleLoginRequest request, CancellationToken cancellationToken)
+    {
+        var customerRoleId = configuration.GetValue<Guid>("Roles:CustomerRoleId");
+        if (customerRoleId == Guid.Empty)
+        {
+            return Problem(
+                title: "Customer role is not configured.",
+                detail: "Configure Roles:CustomerRoleId before allowing Google registration.",
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await sender.Send(
+            new GoogleLoginCommand(
+                request.IdToken ?? request.Credential,
+                request.AuthorizationCode,
+                customerRoleId,
+                request.Name,
+                request.PaternalSurname,
+                request.MaternalSurname,
+                request.Phone,
+                request.DeviceInfo ?? userAgent,
+                GetIpAddress(),
+                userAgent),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return this.ToActionResult(result);
+        }
+
+        SetRefreshTokenCookie(result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt);
+        return Ok(new { token = result.Value.Token });
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
     {
@@ -95,14 +137,18 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
 
     private string? GetIpAddress()
     {
-        var forwardedFor = Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwardedFor))
-        {
-            return forwardedFor.Split(',')[0].Trim();
-        }
-
         return HttpContext.Connection.RemoteIpAddress?.ToString();
     }
 }
 
 public sealed record LoginRequest(string Email, string Password);
+
+public sealed record GoogleLoginRequest(
+    string? IdToken = null,
+    string? Credential = null,
+    string? AuthorizationCode = null,
+    string? Name = null,
+    string? PaternalSurname = null,
+    string? MaternalSurname = null,
+    string? Phone = null,
+    string? DeviceInfo = null);

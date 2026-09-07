@@ -9,20 +9,23 @@ public static class ResultExtensions
     {
         return result.IsSuccess
             ? controller.NoContent()
-            : controller.BadRequest(result.Error);
+            : Failure(controller, result.Error);
     }
 
     public static IActionResult ToActionResult<TValue>(this ControllerBase controller, Result<TValue> result)
     {
         return result.IsSuccess
             ? controller.Ok(result.Value)
-            : controller.BadRequest(result.Error);
+            : Failure(controller, result.Error);
     }
 
     public static IActionResult ToCreatedResult(this ControllerBase controller, Result<Guid> result)
     {
         return result.IsSuccess
             ? controller.Ok(new { id = result.Value })
-            : controller.BadRequest(result.Error);
+            : Failure(controller, result.Error);
     }
+
+    private static IActionResult Failure(ControllerBase controller, Error error)
+        => controller.StatusCode(error.StatusCode ?? StatusCodes.Status400BadRequest, error);
 }

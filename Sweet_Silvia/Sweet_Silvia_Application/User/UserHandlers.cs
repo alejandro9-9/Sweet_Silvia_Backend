@@ -17,12 +17,21 @@ namespace Sweet_Silvia_Application.User;
 
 internal sealed class CreateUserCommandHandler(
     IRepository<UserEntity> users,
+    IRepository<RoleEntity> roles,
     IPasswordHasher passwordHasher,
     IUnitOfWork unitOfWork)
     : ICommandHandler<CreateUserCommand, Guid>
 {
     public async Task<Result<Guid>> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
+        var role = await roles.GetByIdAsync(request.RoleId, cancellationToken);
+        if (role is null || !role.IsActive)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Role.Invalid",
+                "The selected role does not exist or is inactive."));
+        }
+
         var email = EmailAddress.Create(request.Email);
         var phone = PhoneNumber.Create(request.Phone);
 
@@ -48,6 +57,7 @@ internal sealed class CreateUserCommandHandler(
 
 internal sealed class ChangeUserRoleCommandHandler(
     IRepository<UserEntity> users,
+    IRepository<RoleEntity> roles,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ChangeUserRoleCommand>
 {
@@ -59,9 +69,43 @@ internal sealed class ChangeUserRoleCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("User", request.UserId));
         }
 
+        var role = await roles.GetByIdAsync(request.RoleId, cancellationToken);
+        if (role is null || !role.IsActive)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Role.Invalid",
+                "The selected role does not exist or is inactive."));
+        }
+
         user.ChangeRole(request.RoleId);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
+    }
+}
+
+internal sealed class UpdateUserProfileCommandHandler(
+    IRepository<UserEntity> users,
+    IUnitOfWork unitOfWork)
+    : ICommandHandler<UpdateUserProfileCommand, UserResponse>
+{
+    public async Task<Result<UserResponse>> Handle(UpdateUserProfileCommand request, CancellationToken cancellationToken)
+    {
+        var user = await users.GetByIdAsync(request.UserId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure<UserResponse>(ApplicationErrors.NotFound("User", request.UserId));
+        }
+
+        var email = EmailAddress.Create(request.Email);
+        var phone = PhoneNumber.Create(request.Phone);
+        if (users.Query().Any(entry => entry.Id != request.UserId && entry.Email == email))
+        {
+            return Result.Failure<UserResponse>(ApplicationErrors.Conflict("User.EmailAlreadyExists", "Email is already registered."));
+        }
+
+        user.UpdateProfile(request.Name, request.PaternalSurname, request.MaternalSurname, phone, email);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return UserMappings.ToResponse(user);
     }
 }
 
@@ -79,6 +123,25 @@ internal sealed class BlockUserCommandHandler(
         }
 
         user.Block();
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+internal sealed class UnblockUserCommandHandler(
+    IRepository<UserEntity> users,
+    IUnitOfWork unitOfWork)
+    : ICommandHandler<UnblockUserCommand>
+{
+    public async Task<Result> Handle(UnblockUserCommand request, CancellationToken cancellationToken)
+    {
+        var user = await users.GetByIdAsync(request.UserId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("User", request.UserId));
+        }
+
+        user.Unblock();
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -133,7 +196,7 @@ internal sealed class LoginCommandHandler(
         var email = EmailAddress.Create(request.Email);
         var user = users.Query().FirstOrDefault(user => user.Email == email);
 
-        if (user is null || !user.IsActive || !passwordHasher.Verify(request.Password, user.PasswordHash))
+        if (user is null || !user.IsActive || user.PasswordHash is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
         {
             return Result.Failure<LoginResponse>(ApplicationErrors.Unauthorized);
         }
@@ -391,7 +454,7 @@ internal static class UserMappings
             user.Name,
             user.PaternalSurname,
             user.MaternalSurname,
-            user.Phone.Value,
+            user.Phone?.Value,
             user.Email.Value,
             user.Status,
             user.CreatedAt);

@@ -16,8 +16,8 @@ public sealed class DepartmentsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetDepartmentsQuery(onlyActive), cancellationToken));
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetDepartmentsQuery(true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -46,8 +46,8 @@ public sealed class ProvincesController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet("department/{departmentId:guid}")]
-    public async Task<IActionResult> GetByDepartment(Guid departmentId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetProvincesByDepartmentQuery(departmentId, onlyActive), cancellationToken));
+    public async Task<IActionResult> GetByDepartment(Guid departmentId, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetProvincesByDepartmentQuery(departmentId, true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -76,8 +76,8 @@ public sealed class DistrictsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet("province/{provinceId:guid}")]
-    public async Task<IActionResult> GetByProvince(Guid provinceId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetDistrictsByProvinceQuery(provinceId, onlyActive), cancellationToken));
+    public async Task<IActionResult> GetByProvince(Guid provinceId, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetDistrictsByProvinceQuery(provinceId, true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]

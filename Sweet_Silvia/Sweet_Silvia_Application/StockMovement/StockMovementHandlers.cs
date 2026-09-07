@@ -27,6 +27,13 @@ internal sealed class CreateStockMovementCommandHandler(
         }
 
         var difference = request.NewStock - request.PreviousStock;
+        if (difference == 0 || request.Quantity != Math.Abs(difference))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Stock.InvalidAdjustment",
+                "Adjustment quantity must match the difference between previous and new stock."));
+        }
+
         if (difference > 0)
         {
             variant.IncreaseStock(difference);

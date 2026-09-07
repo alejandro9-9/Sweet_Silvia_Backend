@@ -30,5 +30,10 @@ internal sealed class NullableMoneyConverter()
 internal sealed class PhoneNumberConverter()
     : ValueConverter<PhoneNumber, string>(phone => phone.Value, value => PhoneNumber.Create(value));
 
+internal sealed class NullablePhoneNumberConverter()
+    : ValueConverter<PhoneNumber?, string?>(
+        phone => phone == null ? null : phone.Value,
+        value => string.IsNullOrWhiteSpace(value) ? null : PhoneNumber.Create(value));
+
 internal sealed class SkuConverter()
     : ValueConverter<Sku, string>(sku => sku.Value, value => Sku.Create(value));

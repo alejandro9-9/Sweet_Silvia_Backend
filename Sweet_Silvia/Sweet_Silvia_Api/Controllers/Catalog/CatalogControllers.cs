@@ -18,8 +18,8 @@ public sealed class CategoriesController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetCategoriesQuery(onlyActive), cancellationToken));
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetCategoriesQuery(true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -48,8 +48,8 @@ public sealed class CollectionsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetCollectionsQuery(onlyActive), cancellationToken));
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetCollectionsQuery(true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -78,8 +78,8 @@ public sealed class ProductsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] Guid? categoryId, [FromQuery] Guid? collectionId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetProductsQuery(categoryId, collectionId, onlyActive), cancellationToken));
+    public async Task<IActionResult> GetAll([FromQuery] Guid? categoryId, [FromQuery] Guid? collectionId, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetProductsQuery(categoryId, collectionId, true), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -113,8 +113,8 @@ public sealed class ProductVariantsController(ISender sender) : ControllerBase
 
     [AllowAnonymous]
     [HttpGet("product/{productId:guid}")]
-    public async Task<IActionResult> GetByProduct(Guid productId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetProductVariantsByProductQuery(productId, onlyActive), cancellationToken));
+    public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetProductVariantsByProductQuery(productId, true), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost]
@@ -162,7 +162,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     [RequestSizeLimit(MaximumImageSizeBytes)]
     public async Task<IActionResult> Upload([FromForm] UploadProductImageFileRequest request, CancellationToken cancellationToken)
     {
-        var validationError = ValidateFile(request.File, AllowedImageExtensions, MaximumImageSizeBytes);
+        var validationError = await ValidateFileAsync(request.File, AllowedImageExtensions, MaximumImageSizeBytes, cancellationToken);
         if (validationError is not null)
         {
             return BadRequest(new { error = validationError });
@@ -198,12 +198,13 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             }
         }
 
+        await using var fileStream = request.File.OpenReadStream();
         var storedFile = await fileStorage.SaveAsync(
             new FileStorageUpload(
                 "products",
                 request.File.FileName,
                 request.File.ContentType,
-                request.File.OpenReadStream()),
+                fileStream),
             cancellationToken);
 
         var result = await sender.Send(
@@ -231,7 +232,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new DeleteProductImageCommand(id), cancellationToken));
 
-    private static string? ValidateFile(IFormFile file, HashSet<string> allowedExtensions, long maximumSizeBytes)
+    private static async Task<string?> ValidateFileAsync(IFormFile file, HashSet<string> allowedExtensions, long maximumSizeBytes, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
         {
@@ -243,10 +244,24 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             return $"File should not exceed {maximumSizeBytes / 1024 / 1024} MB.";
         }
 
-        var extension = Path.GetExtension(file.FileName);
-        return allowedExtensions.Contains(extension)
-            ? null
-            : $"File extension '{extension}' is not allowed.";
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!allowedExtensions.Contains(extension))
+        {
+            return $"File extension '{extension}' is not allowed.";
+        }
+
+        await using var stream = file.OpenReadStream();
+        var header = new byte[12];
+        var read = await stream.ReadAsync(header.AsMemory(), cancellationToken);
+        var validSignature = extension switch
+        {
+            ".jpg" or ".jpeg" => read >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            ".png" => read >= 8 && header[..8].SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }),
+            ".webp" => read >= 12 && header[..4].SequenceEqual("RIFF"u8.ToArray()) && header[8..12].SequenceEqual("WEBP"u8.ToArray()),
+            _ => false
+        };
+
+        return validSignature ? null : "The file content does not match its extension.";
     }
 }
 

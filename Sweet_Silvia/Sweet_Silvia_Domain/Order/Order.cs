@@ -10,12 +10,13 @@ public sealed class Order : Entity
 
     private Order() { }
 
-    public Order(Guid id, Guid userId, Guid addressId, Guid? couponId, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public Order(Guid id, Guid userId, Guid addressId, Guid? couponId, int? couponAppliedQuantity, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
         : base(id)
     {
         UserId = userId;
         AddressId = addressId;
         CouponId = couponId;
+        CouponAppliedQuantity = couponAppliedQuantity;
         Status = status;
         CreatedAt = createdAt;
         Subtotal = subtotal;
@@ -27,6 +28,7 @@ public sealed class Order : Entity
     public Guid UserId { get; private set; }
     public Guid AddressId { get; private set; }
     public Guid? CouponId { get; private set; }
+    public int? CouponAppliedQuantity { get; private set; }
     public OrderStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
@@ -36,11 +38,16 @@ public sealed class Order : Entity
     public Money Total { get; private set; } = null!;
     public IReadOnlyCollection<OrderItemEntity> Items => _items.AsReadOnly();
 
-    public static Order Create(Guid userId, Guid addressId, Guid? couponId, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public static Order Create(Guid userId, Guid addressId, Guid? couponId, int? couponAppliedQuantity, Money subtotal, Money discountTotal, Money shippingCost, Money total)
     {
         Validate(userId, addressId, subtotal, discountTotal, shippingCost, total);
 
-        var result = new Order(Guid.NewGuid(), userId, addressId, couponId, OrderStatus.PendingReceipt, DateTimeOffset.UtcNow, subtotal, discountTotal, shippingCost, total);
+        if (couponAppliedQuantity <= 0)
+        {
+            throw new ArgumentException("Applied coupon quantity should be greater than zero.", nameof(couponAppliedQuantity));
+        }
+
+        var result = new Order(Guid.NewGuid(), userId, addressId, couponId, couponAppliedQuantity, OrderStatus.PendingReceipt, DateTimeOffset.UtcNow, subtotal, discountTotal, shippingCost, total);
         result.AddDomainEvent(new OrderCreatedEvent(result.Id));
         return result;
     }
@@ -57,10 +64,33 @@ public sealed class Order : Entity
             throw new ArgumentException("Changed by user id is invalid.", nameof(changedByUserId));
         }
 
+        if (!IsValidTransition(Status, status))
+        {
+            throw new InvalidOperationException($"Order cannot change from {Status} to {status}.");
+        }
+
         var previousStatus = Status;
         Status = status;
         UpdatedAt = DateTimeOffset.UtcNow;
         AddDomainEvent(new OrderStatusChangedEvent(Id, previousStatus, status, changedByUserId, observation));
+    }
+
+    private static bool IsValidTransition(OrderStatus current, OrderStatus next)
+    {
+        if (current == next)
+        {
+            return false;
+        }
+
+        return current switch
+        {
+            OrderStatus.PendingReceipt => next is OrderStatus.ReceiptInReview or OrderStatus.Cancelled or OrderStatus.OutOfStock,
+            OrderStatus.ReceiptInReview => next is OrderStatus.PendingReceipt or OrderStatus.Paid or OrderStatus.Cancelled or OrderStatus.OutOfStock,
+            OrderStatus.Paid => next is OrderStatus.Preparing,
+            OrderStatus.Preparing => next is OrderStatus.Shipped,
+            OrderStatus.Shipped => next is OrderStatus.Delivered,
+            _ => false
+        };
     }
 
     private static void Validate(Guid userId, Guid addressId, Money subtotal, Money discountTotal, Money shippingCost, Money total)
