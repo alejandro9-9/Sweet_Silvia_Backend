@@ -86,6 +86,11 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     [HttpPatch("{id:guid}/block")]
     public async Task<IActionResult> Block(Guid id, CancellationToken cancellationToken)
     {
+        if (id == User.GetUserId())
+        {
+            return Conflict(new { code = "User.CannotBlockSelf", message = "You cannot block your own account." });
+        }
+
         var result = await sender.Send(new BlockUserCommand(id), cancellationToken);
         return this.ToActionResult(result);
     }
@@ -102,6 +107,11 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     [HttpPatch("{id:guid}/role")]
     public async Task<IActionResult> ChangeRole(Guid id, ChangeUserRoleRequest request, CancellationToken cancellationToken)
     {
+        if (id == User.GetUserId())
+        {
+            return Conflict(new { code = "User.CannotChangeOwnRole", message = "You cannot change your own role." });
+        }
+
         var result = await sender.Send(new ChangeUserRoleCommand(id, request.RoleId), cancellationToken);
         return this.ToActionResult(result);
     }

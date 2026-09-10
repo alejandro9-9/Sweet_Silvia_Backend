@@ -41,6 +41,10 @@ internal sealed class ProductVariantConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(entity => entity.Sku).HasConversion(new SkuConverter()).IsRequired().HasMaxLength(50);
         builder.Property(entity => entity.PhysicalStock).IsRequired();
         builder.Property(entity => entity.Price).HasConversion(new NullableMoneyConverter()).HasMaxLength(40);
+        builder.Property(entity => entity.ShippingWeightKg).HasPrecision(10, 3).IsRequired();
+        builder.Property(entity => entity.ShippingLengthCm).HasPrecision(10, 2).IsRequired();
+        builder.Property(entity => entity.ShippingWidthCm).HasPrecision(10, 2).IsRequired();
+        builder.Property(entity => entity.ShippingHeightCm).HasPrecision(10, 2).IsRequired();
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Property(entity => entity.UpdatedAt);

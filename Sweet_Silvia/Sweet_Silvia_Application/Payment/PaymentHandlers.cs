@@ -6,6 +6,7 @@ using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.Coupon;
 using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.Payment;
+using Sweet_Silvia_Domain.PaymentMethod;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
 using Sweet_Silvia_Domain.StockMovement;
 using OrderEntity = Sweet_Silvia_Domain.Order.Order;
@@ -241,6 +242,7 @@ internal sealed class GetPaymentReceiptByIdQueryHandler(IRepository<PaymentRecei
 
 internal sealed class ReviewPaymentCommandHandler(
     IRepository<PaymentEntity> payments,
+    IRepository<PaymentReceiptEntity> receipts,
     IRepository<PaymentReviewEntity> reviews,
     IRepository<OrderEntity> orders,
     IRepository<OrderItemEntity> orderItems,
@@ -249,6 +251,7 @@ internal sealed class ReviewPaymentCommandHandler(
     IRepository<OrderStatusHistoryEntity> histories,
     IRepository<CouponEntity> coupons,
     IRepository<CouponUsageEntity> couponUsages,
+    IRepository<PaymentMethodEntity> paymentMethods,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ReviewPaymentCommand, Guid>
 {
@@ -260,11 +263,19 @@ internal sealed class ReviewPaymentCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Payment", request.PaymentId));
         }
 
-        if (payment.Status != PaymentStatus.InReview)
+        var paymentMethod = await paymentMethods.GetByIdAsync(payment.PaymentMethodId, cancellationToken);
+        if (paymentMethod is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("PaymentMethod", payment.PaymentMethodId));
+        }
+
+        var isCashPayment = paymentMethod.Type == PaymentMethodType.Cash;
+        if ((!isCashPayment && payment.Status != PaymentStatus.InReview) ||
+            (isCashPayment && payment.Status is not PaymentStatus.PendingReceipt and not PaymentStatus.InReview))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Payment.NotInReview",
-                "Only payments in review can be approved or rejected manually."));
+                "Only a payment in review or a pending cash payment can be reviewed manually."));
         }
 
         if (request.Result is not PaymentReviewResult.Approved and not PaymentReviewResult.Rejected)
@@ -276,18 +287,39 @@ internal sealed class ReviewPaymentCommandHandler(
 
         var review = PaymentReviewEntity.Create(request.PaymentId, request.ReviewerUserId, request.Result, request.Observation);
         reviews.Add(review);
+        var latestReceipt = receipts.Query()
+            .Where(receipt => receipt.PaymentId == request.PaymentId)
+            .OrderByDescending(receipt => receipt.UploadedAt)
+            .FirstOrDefault();
 
         if (request.Result == PaymentReviewResult.Approved)
         {
-            var stockValidation = await PaymentSettlementService.Approve(payment, request.ReviewerUserId, null, request.Observation, orders, orderItems, variants, stockMovements, histories, coupons, couponUsages, cancellationToken);
+            var stockValidation = await PaymentSettlementService.Approve(payment, request.ReviewerUserId, null, request.Observation, isCashPayment, orders, orderItems, variants, stockMovements, histories, coupons, couponUsages, cancellationToken);
             if (stockValidation.IsFailure)
             {
                 return Result.Failure<Guid>(stockValidation.Error);
             }
+
+            if (latestReceipt?.Status == ReceiptStatus.Uploaded)
+            {
+                latestReceipt.Approve(request.Observation);
+            }
         }
         else
         {
-            payment.Reject(request.ReviewerUserId, request.Observation);
+            if (isCashPayment && payment.Status == PaymentStatus.PendingReceipt)
+            {
+                payment.RejectCash(request.ReviewerUserId, request.Observation);
+            }
+            else
+            {
+                payment.Reject(request.ReviewerUserId, request.Observation);
+            }
+
+            if (latestReceipt?.Status == ReceiptStatus.Uploaded)
+            {
+                latestReceipt.Reject(request.Observation);
+            }
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -303,6 +335,7 @@ internal static class PaymentSettlementService
         Guid? reviewerUserId,
         string? gatewayAuthorizationCode,
         string? observation,
+        bool isCashPayment,
         IRepository<OrderEntity> orders,
         IRepository<OrderItemEntity> orderItems,
         IRepository<ProductVariantEntity> variants,
@@ -381,7 +414,6 @@ internal static class PaymentSettlementService
                     order.DiscountTotal);
             }
 
-            couponUsages.Add(couponUsage);
         }
 
         var itemVariants = new List<(OrderItemEntity Item, ProductVariantEntity Variant)>();
@@ -393,7 +425,13 @@ internal static class PaymentSettlementService
                 return Result.Failure(ApplicationErrors.NotFound("ProductVariant", item.ProductVariantId));
             }
 
-            if (variant.PhysicalStock < item.Quantity)
+            var hasReservation = stockMovements.Query().Any(movement =>
+                movement.OrderId == order.Id &&
+                movement.ProductVariantId == item.ProductVariantId &&
+                movement.Type == StockMovementType.Reservation &&
+                movement.Quantity == item.Quantity);
+
+            if (!hasReservation && variant.PhysicalStock < item.Quantity)
             {
                 return Result.Failure(ApplicationErrors.Conflict("Stock.NotEnough", $"Product variant '{variant.Id}' does not have enough stock."));
             }
@@ -403,6 +441,16 @@ internal static class PaymentSettlementService
 
         foreach (var (item, variant) in itemVariants)
         {
+            var hasReservation = stockMovements.Query().Any(movement =>
+                movement.OrderId == order.Id &&
+                movement.ProductVariantId == item.ProductVariantId &&
+                movement.Type == StockMovementType.Reservation &&
+                movement.Quantity == item.Quantity);
+            if (hasReservation)
+            {
+                continue;
+            }
+
             var previousStock = variant.PhysicalStock;
             variant.DecreaseStock(item.Quantity);
             stockMovements.Add(StockMovementEntity.Create(
@@ -417,7 +465,14 @@ internal static class PaymentSettlementService
 
         if (reviewerUserId.HasValue)
         {
-            payment.Approve(reviewerUserId.Value, observation);
+            if (isCashPayment && payment.Status == PaymentStatus.PendingReceipt)
+            {
+                payment.ApproveCash(reviewerUserId.Value, observation);
+            }
+            else
+            {
+                payment.Approve(reviewerUserId.Value, observation);
+            }
         }
         else
         {
@@ -427,6 +482,11 @@ internal static class PaymentSettlementService
         var previousStatus = order.Status;
         order.ChangeStatus(OrderStatus.Paid, reviewerUserId, observation);
         histories.Add(OrderStatusHistoryEntity.Create(order.Id, previousStatus, OrderStatus.Paid, reviewerUserId, observation));
+
+        if (couponUsage is not null)
+        {
+            couponUsages.Add(couponUsage);
+        }
 
         return Result.Success();
     }

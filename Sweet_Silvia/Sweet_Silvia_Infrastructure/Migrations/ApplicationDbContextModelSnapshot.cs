@@ -440,6 +440,9 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("CouponId", "OrderId")
+                        .IsUnique();
+
                     b.HasIndex("CouponId", "UserId");
 
                     b.ToTable("CouponUsages", (string)null);
@@ -613,6 +616,9 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
+                    b.Property<Guid?>("ShippingAgencyId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("ShippingCost")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -650,6 +656,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.HasIndex("AddressId");
 
                     b.HasIndex("CouponId");
+
+                    b.HasIndex("ShippingAgencyId");
 
                     b.HasIndex("Status");
 
@@ -828,7 +836,7 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasIndex("OrderId")
                         .IsUnique()
-                        .HasFilter("\"Status\" = 'PendingGateway'");
+                        .HasFilter("\"Status\" IN ('PendingReceipt', 'InReview', 'PendingGateway', 'Approved')");
 
                     b.HasIndex("PaymentMethodId");
 
@@ -1051,6 +1059,22 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal>("ShippingHeightCm")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("numeric(10,2)");
+
+                    b.Property<decimal>("ShippingLengthCm")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("numeric(10,2)");
+
+                    b.Property<decimal>("ShippingWeightKg")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("numeric(10,3)");
+
+                    b.Property<decimal>("ShippingWidthCm")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("numeric(10,2)");
+
                     b.Property<string>("Size")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -1245,7 +1269,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.HasIndex("CourierId");
 
-                    b.HasIndex("OrderId");
+                    b.HasIndex("OrderId")
+                        .IsUnique();
 
                     b.HasIndex("Status");
 
@@ -1608,6 +1633,11 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
                         .WithMany()
                         .HasForeignKey("CouponId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Sweet_Silvia_Domain.OlvaAgency.OlvaAgency", null)
+                        .WithMany()
+                        .HasForeignKey("ShippingAgencyId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Sweet_Silvia_Domain.User.User", null)

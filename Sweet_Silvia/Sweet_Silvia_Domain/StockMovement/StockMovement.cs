@@ -62,14 +62,14 @@ public sealed class StockMovement : Entity
 
     private static void ValidateStockChange(StockMovementType type, int quantity, int previousStock, int newStock, Guid? orderId)
     {
-        if ((type == StockMovementType.Sale || type == StockMovementType.Return || type == StockMovementType.Cancellation) && !orderId.HasValue)
+        if ((type == StockMovementType.Sale || type == StockMovementType.Return || type == StockMovementType.Cancellation || type == StockMovementType.Reservation) && !orderId.HasValue)
         {
             throw new ArgumentException("Order id is required for order stock movements.", nameof(orderId));
         }
 
-        if (type == StockMovementType.Sale && newStock != previousStock - quantity)
+        if ((type == StockMovementType.Sale || type == StockMovementType.Reservation) && newStock != previousStock - quantity)
         {
-            throw new ArgumentException("Sale stock movement should decrease stock by quantity.", nameof(newStock));
+            throw new ArgumentException("Sale and reservation stock movements should decrease stock by quantity.", nameof(newStock));
         }
 
         if ((type == StockMovementType.Return || type == StockMovementType.Cancellation) && newStock != previousStock + quantity)

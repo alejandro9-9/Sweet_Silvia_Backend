@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 namespace Sweet_Silvia_Domain.Abstractions;
+
 public class Result
 {
     protected Result(bool isSuccess, Error error)

@@ -7,6 +7,7 @@ using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
 using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using UserEntity = Sweet_Silvia_Domain.User.User;
+using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
 
 namespace Sweet_Silvia_Infrastructure.Configurations;
 
@@ -18,6 +19,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<OrderEntity>
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.UserId).IsRequired();
         builder.Property(entity => entity.AddressId).IsRequired();
+        builder.Property(entity => entity.ShippingAgencyId);
         builder.Property(entity => entity.CouponId);
         builder.Property(entity => entity.CouponAppliedQuantity);
         builder.Property(entity => entity.Status).HasConversion<string>().IsRequired().HasMaxLength(40);
@@ -30,10 +32,12 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<OrderEntity>
         builder.Ignore(entity => entity.Items);
         builder.HasIndex(entity => entity.UserId);
         builder.HasIndex(entity => entity.AddressId);
+        builder.HasIndex(entity => entity.ShippingAgencyId);
         builder.HasIndex(entity => entity.CouponId);
         builder.HasIndex(entity => entity.Status);
         builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<AddressEntity>().WithMany().HasForeignKey(entity => entity.AddressId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<OlvaAgencyEntity>().WithMany().HasForeignKey(entity => entity.ShippingAgencyId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<CouponEntity>().WithMany().HasForeignKey(entity => entity.CouponId).OnDelete(DeleteBehavior.Restrict);
         builder.Property<uint>("xmin").IsRowVersion();
     }

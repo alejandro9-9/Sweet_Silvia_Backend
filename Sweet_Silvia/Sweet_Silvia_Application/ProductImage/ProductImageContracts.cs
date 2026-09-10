@@ -8,6 +8,10 @@ public sealed record CreateProductImageCommand(Guid ProductId, Guid? ProductVari
 
 public sealed record UpdateProductImageCommand(Guid Id, Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain) : ICommand;
 
+public sealed record ReorderProductImagesCommand(Guid ProductId, IReadOnlyList<Guid> ImageIds) : ICommand;
+
 public sealed record DeleteProductImageCommand(Guid Id) : ICommand;
+
+public sealed record GetProductImageByIdQuery(Guid Id) : IQuery<ProductImageResponse>;
 
 public sealed record GetProductImagesByProductQuery(Guid ProductId) : IQuery<List<ProductImageResponse>>;

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
 using Sweet_Silvia_Api.Extensions;
@@ -16,6 +18,19 @@ if (int.TryParse(builder.Configuration["PORT"], out var port))
 }
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    var configuredProxies = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
+    foreach (var proxy in configuredProxies)
+    {
+        if (IPAddress.TryParse(proxy, out var address))
+        {
+            options.KnownProxies.Add(address);
+        }
+    }
+});
 
 builder.Services.AddCors(options => options.AddPolicy("defaultCorsPolicy", policy =>
 {
@@ -94,6 +109,7 @@ if (app.Environment.IsDevelopment())
 }
 
 await app.ApplyMigrationsAsync();
+app.UseForwardedHeaders();
 app.UseRateLimiter();
 app.UseCors("defaultCorsPolicy");
 if (!app.Environment.IsDevelopment())
@@ -104,7 +120,19 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+app.MapGet("/health", async (ApplicationDbContext database, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return await database.Database.CanConnectAsync(cancellationToken)
+            ? Results.Ok(new { status = "healthy" })
+            : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+});
 app.Run();
 
 public partial class Program;

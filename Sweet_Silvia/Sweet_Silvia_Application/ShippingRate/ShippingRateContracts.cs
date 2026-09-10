@@ -22,7 +22,8 @@ public sealed record CalculateShippingCostQuery(
     ShippingDestinationType DestinationType,
     decimal OrderSubtotal,
     string Currency = "PEN",
-    IReadOnlyList<ShippingPackageItem>? PackageItems = null) : IQuery<ShippingCostResponse>;
+    IReadOnlyList<ShippingPackageItem>? PackageItems = null,
+    Guid? CartUserId = null) : IQuery<ShippingCostResponse>;
 
 public sealed record ShippingCostResponse(
     Guid ShippingRateId,

@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.Olva;
+using Sweet_Silvia_Application.Order;
+using Sweet_Silvia_Application.Shipment;
 
 namespace Sweet_Silvia_Api.Controllers.Shipping;
 
@@ -115,3 +117,44 @@ public sealed record SyncOlvaAgenciesRequest(
     string? Department = null,
     string? Province = null,
     string? District = null);
+
+[ApiController]
+[Route("api/shipping/olva/customer")]
+[Authorize(Roles = ApiRoles.Customer)]
+public sealed class CustomerOlvaController(ISender sender) : ControllerBase
+{
+    [HttpPost("orders/{orderId:guid}/track")]
+    public async Task<IActionResult> TrackOrder(Guid orderId, CancellationToken cancellationToken)
+    {
+        var order = await sender.Send(new GetOrderByIdQuery(orderId), cancellationToken);
+        if (order.IsFailure)
+        {
+            return this.ToActionResult(order);
+        }
+
+        if (order.Value.UserId != User.GetUserId())
+        {
+            return Forbid();
+        }
+
+        var shipments = await sender.Send(new GetShipmentsByOrderQuery(orderId), cancellationToken);
+        if (shipments.IsFailure)
+        {
+            return this.ToActionResult(shipments);
+        }
+
+        var shipment = shipments.Value.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.TrackingCode));
+        if (shipment is null)
+        {
+            return NotFound(new
+            {
+                code = "Olva.TrackingUnavailable",
+                message = "El pedido todavía no tiene un código de seguimiento de Olva registrado."
+            });
+        }
+
+        return this.ToActionResult(await sender.Send(
+            new TrackOlvaShipmentQuery(shipment.TrackingCode!, shipment.ExternalShipmentCode),
+            cancellationToken));
+    }
+}

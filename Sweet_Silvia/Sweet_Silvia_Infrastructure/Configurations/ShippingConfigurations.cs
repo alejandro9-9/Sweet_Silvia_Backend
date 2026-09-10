@@ -82,7 +82,7 @@ internal sealed class ShipmentConfiguration : IEntityTypeConfiguration<ShipmentE
         builder.Property(entity => entity.EstimatedDeliveryAt);
         builder.Property(entity => entity.DeliveredAt);
         builder.Property(entity => entity.Observation).HasMaxLength(500);
-        builder.HasIndex(entity => entity.OrderId);
+        builder.HasIndex(entity => entity.OrderId).IsUnique();
         builder.HasIndex(entity => entity.CourierId);
         builder.HasIndex(entity => entity.Status);
         builder.HasIndex(entity => entity.TrackingCode);

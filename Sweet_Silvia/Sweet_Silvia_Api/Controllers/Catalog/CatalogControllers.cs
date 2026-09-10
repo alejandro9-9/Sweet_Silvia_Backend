@@ -18,8 +18,8 @@ public sealed class CategoriesController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetCategoriesQuery(true), cancellationToken));
+    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetCategoriesQuery(onlyActive || !User.IsInRole(ApiRoles.AdministratorOrAssistant)), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -48,8 +48,8 @@ public sealed class CollectionsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetCollectionsQuery(true), cancellationToken));
+    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetCollectionsQuery(onlyActive || !User.IsInRole(ApiRoles.AdministratorOrAssistant)), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -78,8 +78,8 @@ public sealed class ProductsController(ISender sender) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] Guid? categoryId, [FromQuery] Guid? collectionId, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetProductsQuery(categoryId, collectionId, true), cancellationToken));
+    public async Task<IActionResult> GetAll([FromQuery] Guid? categoryId, [FromQuery] Guid? collectionId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetProductsQuery(categoryId, collectionId, onlyActive || !User.IsInRole(ApiRoles.AdministratorOrAssistant)), cancellationToken));
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -113,18 +113,18 @@ public sealed class ProductVariantsController(ISender sender) : ControllerBase
 
     [AllowAnonymous]
     [HttpGet("product/{productId:guid}")]
-    public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetProductVariantsByProductQuery(productId, true), cancellationToken));
+    public async Task<IActionResult> GetByProduct(Guid productId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetProductVariantsByProductQuery(productId, onlyActive || !User.IsInRole(ApiRoles.AdministratorOrAssistant)), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost]
     public async Task<IActionResult> Create(CreateProductVariantRequest request, CancellationToken cancellationToken)
-        => this.ToCreatedResult(await sender.Send(new CreateProductVariantCommand(request.ProductId, request.Size, request.Color, request.Sku, request.PhysicalStock, request.Price, request.Currency), cancellationToken));
+        => this.ToCreatedResult(await sender.Send(new CreateProductVariantCommand(request.ProductId, request.Size, request.Color, request.Sku, request.PhysicalStock, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, UpdateProductVariantRequest request, CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new UpdateProductVariantCommand(id, request.Size, request.Color, request.Price, request.Currency), cancellationToken));
+        => this.ToActionResult(await sender.Send(new UpdateProductVariantCommand(id, request.Size, request.Color, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm), cancellationToken));
 
     [Authorize(Roles = ApiRoles.Administrator)]
     [HttpDelete("{id:guid}")]
@@ -207,19 +207,31 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
                 fileStream),
             cancellationToken);
 
-        var result = await sender.Send(
-            new CreateProductImageCommand(
-                request.ProductId,
-                request.ProductVariantId,
-                storedFile.Url,
-                request.AltText,
-                request.Order,
-                request.IsMain),
-            cancellationToken);
+        try
+        {
+            var result = await sender.Send(
+                new CreateProductImageCommand(
+                    request.ProductId,
+                    request.ProductVariantId,
+                    storedFile.Url,
+                    request.AltText,
+                    request.Order,
+                    request.IsMain),
+                cancellationToken);
 
-        return result.IsSuccess
-            ? Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key })
-            : BadRequest(result.Error);
+            if (result.IsFailure)
+            {
+                await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+                return BadRequest(result.Error);
+            }
+
+            return Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key });
+        }
+        catch
+        {
+            await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+            throw;
+        }
     }
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
@@ -227,10 +239,31 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     public async Task<IActionResult> Update(Guid id, UpdateProductImageRequest request, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new UpdateProductImageCommand(id, request.ProductVariantId, request.Url, request.AltText, request.Order, request.IsMain), cancellationToken));
 
+    [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
+    [HttpPut("product/{productId:guid}/order")]
+    public async Task<IActionResult> Reorder(Guid productId, ReorderProductImagesRequest request, CancellationToken cancellationToken)
+        => this.ToActionResult(await sender.Send(new ReorderProductImagesCommand(productId, request.ImageIds), cancellationToken));
+
     [Authorize(Roles = ApiRoles.Administrator)]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new DeleteProductImageCommand(id), cancellationToken));
+    {
+        var image = await sender.Send(new GetProductImageByIdQuery(id), cancellationToken);
+        if (image.IsFailure)
+        {
+            return this.ToActionResult(image);
+        }
+
+        var result = await sender.Send(new DeleteProductImageCommand(id), cancellationToken);
+        if (result.IsFailure)
+        {
+            return this.ToActionResult(result);
+        }
+
+        // Delete the physical file only after the database record was removed.
+        await fileStorage.DeleteAsync(image.Value.Url, cancellationToken);
+        return this.ToActionResult(result);
+    }
 
     private static async Task<string?> ValidateFileAsync(IFormFile file, HashSet<string> allowedExtensions, long maximumSizeBytes, CancellationToken cancellationToken)
     {
@@ -271,10 +304,11 @@ public sealed record CreateCollectionRequest(string Name, string Description);
 public sealed record UpdateCollectionRequest(string Name, string Description);
 public sealed record CreateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
 public sealed record UpdateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
-public sealed record CreateProductVariantRequest(Guid ProductId, string Size, string Color, string Sku, int PhysicalStock, decimal? Price = null, string Currency = "PEN");
-public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN");
+public sealed record CreateProductVariantRequest(Guid ProductId, string Size, string Color, string Sku, int PhysicalStock, decimal? Price = null, string Currency = "PEN", decimal ShippingWeightKg = 0.3m, decimal ShippingLengthCm = 30m, decimal ShippingWidthCm = 22m, decimal ShippingHeightCm = 4m);
+public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN", decimal? ShippingWeightKg = null, decimal? ShippingLengthCm = null, decimal? ShippingWidthCm = null, decimal? ShippingHeightCm = null);
 public sealed record CreateProductImageRequest(Guid ProductId, Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
 public sealed record UpdateProductImageRequest(Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
+public sealed record ReorderProductImagesRequest(IReadOnlyList<Guid> ImageIds);
 
 public sealed class UploadProductImageFileRequest
 {

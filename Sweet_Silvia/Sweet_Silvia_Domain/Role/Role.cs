@@ -47,11 +47,27 @@ public sealed class Role : Entity
             throw new ArgumentException("El nombre del rol es obligatorio.", nameof(name));
         }
 
-        Name = name.Trim();
+        var normalizedName = name.Trim();
+        if (IsSystemRole && !string.Equals(Name, normalizedName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Los roles del sistema no se pueden renombrar.");
+        }
+
+        Name = normalizedName;
     }
 
     public void Delete()
     {
+        if (IsSystemRole)
+        {
+            throw new InvalidOperationException("Los roles del sistema no se pueden desactivar.");
+        }
+
         IsActive = false;
     }
+
+    private bool IsSystemRole =>
+        Id == RoleIds.Customer ||
+        Id == RoleIds.Administrator ||
+        Id == RoleIds.Assistant;
 }

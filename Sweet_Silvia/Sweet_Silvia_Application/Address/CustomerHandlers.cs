@@ -233,6 +233,8 @@ internal sealed class GetActiveCartByUserQueryHandler(
 internal sealed class AddCartItemCommandHandler(
     IRepository<CartEntity> carts,
     IRepository<CartItemEntity> cartItems,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductEntity> products,
     IUnitOfWork unitOfWork)
     : ICommandHandler<AddCartItemCommand>
 {
@@ -244,6 +246,20 @@ internal sealed class AddCartItemCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
         }
 
+        if (request.Quantity is < 1 or > 99)
+        {
+            return Result.Failure(ApplicationErrors.Conflict("Cart.InvalidQuantity", "Cart quantity must be between 1 and 99."));
+        }
+
+        var variant = variants.Query().FirstOrDefault(item =>
+            item.Id == request.ProductVariantId &&
+            item.IsActive &&
+            products.Query().Any(product => product.Id == item.ProductId && product.IsActive));
+        if (variant is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("ProductVariant", request.ProductVariantId));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is null)
         {
@@ -251,6 +267,11 @@ internal sealed class AddCartItemCommandHandler(
         }
         else
         {
+            if (item.Quantity > 99 - request.Quantity)
+            {
+                return Result.Failure(ApplicationErrors.Conflict("Cart.InvalidQuantity", "Cart quantity cannot exceed 99."));
+            }
+
             item.IncreaseQuantity(request.Quantity);
         }
 
@@ -263,6 +284,8 @@ internal sealed class AddCartItemCommandHandler(
 internal sealed class UpdateCartItemQuantityCommandHandler(
     IRepository<CartItemEntity> cartItems,
     IRepository<CartEntity> carts,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductEntity> products,
     IUnitOfWork unitOfWork)
     : ICommandHandler<UpdateCartItemQuantityCommand>
 {
@@ -274,10 +297,23 @@ internal sealed class UpdateCartItemQuantityCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Cart", request.CartId));
         }
 
+        if (request.Quantity > 99)
+        {
+            return Result.Failure(ApplicationErrors.Conflict("Cart.InvalidQuantity", "Cart quantity cannot exceed 99."));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("CartItem"));
+        }
+
+        if (request.Quantity > 0 && !variants.Query().Any(variant =>
+                variant.Id == request.ProductVariantId &&
+                variant.IsActive &&
+                products.Query().Any(product => product.Id == variant.ProductId && product.IsActive)))
+        {
+            return Result.Failure(ApplicationErrors.NotFound("ProductVariant", request.ProductVariantId));
         }
 
         if (request.Quantity <= 0)

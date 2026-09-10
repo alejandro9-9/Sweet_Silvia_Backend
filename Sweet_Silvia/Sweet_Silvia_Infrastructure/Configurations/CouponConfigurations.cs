@@ -78,6 +78,7 @@ internal sealed class CouponUsageConfiguration : IEntityTypeConfiguration<Coupon
         builder.Property(entity => entity.UsedAt).IsRequired();
         builder.HasIndex(entity => new { entity.CouponId, entity.UserId });
         builder.HasIndex(entity => entity.OrderId);
+        builder.HasIndex(entity => new { entity.CouponId, entity.OrderId }).IsUnique();
         builder.HasOne<CouponEntity>().WithMany().HasForeignKey(entity => entity.CouponId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserEntity>().WithMany().HasForeignKey(entity => entity.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Restrict);

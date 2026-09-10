@@ -1,6 +1,7 @@
 using Amazon;
 using Amazon.S3;
 using System.Net.Mail;
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,7 @@ using Sweet_Silvia_Application.Abstractions.Storage;
 using Sweet_Silvia_Application.Abstractions.Time;
 using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.RefreshToken;
+using Sweet_Silvia_Domain.User;
 using Sweet_Silvia_Infrastructure.Abstractions.Audit;
 using Sweet_Silvia_Infrastructure.Abstractions.Email;
 using Sweet_Silvia_Infrastructure.Abstractions.Payments;
@@ -152,6 +154,34 @@ public static class DependencyInjection
                     ValidAudience = options.Audience,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.SecretKey))
                 };
+                jwtBearerOptions.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                        var roleIdValue = context.Principal?.FindFirstValue("roleId");
+                        if (!Guid.TryParse(userIdValue, out var userId) || !Guid.TryParse(roleIdValue, out var roleId))
+                        {
+                            context.Fail("The authenticated user claims are invalid.");
+                            return;
+                        }
+
+                        var database = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+                        var user = await database.Users
+                            .AsNoTracking()
+                            .SingleOrDefaultAsync(item => item.Id == userId, context.HttpContext.RequestAborted);
+                        var role = user is null
+                            ? null
+                            : await database.Roles
+                                .AsNoTracking()
+                                .SingleOrDefaultAsync(item => item.Id == roleId, context.HttpContext.RequestAborted);
+
+                        if (user is null || user.Status != UserStatus.Active || user.RoleId != roleId || role is null || !role.IsActive)
+                        {
+                            context.Fail("The user is no longer active or the token role is stale.");
+                        }
+                    }
+                };
             });
     }
 
@@ -181,6 +211,7 @@ public static class DependencyInjection
         if (string.IsNullOrWhiteSpace(options.Issuer) ||
             string.IsNullOrWhiteSpace(options.Audience) ||
             string.IsNullOrWhiteSpace(options.SecretKey) ||
+            options.SecretKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) ||
             Encoding.UTF8.GetByteCount(options.SecretKey) < 32 ||
             options.ExpirationMinutes <= 0)
         {

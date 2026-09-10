@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 
 namespace Sweet_Silvia_Domain.Abstractions;
+
 public record Error
 (
     string Code,

@@ -29,6 +29,22 @@ internal sealed class LocalFileStorageService(FileStorageOptions options) : IFil
         return new FileStorageResult(url, key);
     }
 
+    public Task DeleteAsync(string keyOrUrl, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        foreach (var rootPath in new[] { options.LocalRootPath, options.PrivateLocalRootPath })
+        {
+            if (TryResolvePath(keyOrUrl, rootPath, out var fullPath) && File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+                break;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     public async Task<FileStorageReadResult?> OpenPrivateReadAsync(string key, CancellationToken cancellationToken = default)
     {
         if (!TryResolvePrivatePath(key, out var fullPath))
@@ -48,6 +64,9 @@ internal sealed class LocalFileStorageService(FileStorageOptions options) : IFil
     }
 
     private bool TryResolvePrivatePath(string key, out string fullPath)
+        => TryResolvePath(key, options.PrivateLocalRootPath, out fullPath);
+
+    private static bool TryResolvePath(string key, string rootPath, out string fullPath)
     {
         fullPath = string.Empty;
         if (string.IsNullOrWhiteSpace(key))
@@ -55,16 +74,34 @@ internal sealed class LocalFileStorageService(FileStorageOptions options) : IFil
             return false;
         }
 
-        var normalizedKey = key.Trim().Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        var normalizedKey = ExtractKey(key).Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
         var segments = normalizedKey.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
         if (Path.IsPathRooted(normalizedKey) || segments.Any(segment => segment is "." or ".."))
         {
             return false;
         }
 
-        var root = Path.GetFullPath(options.PrivateLocalRootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         fullPath = Path.GetFullPath(Path.Combine(root, normalizedKey));
         return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ExtractKey(string key)
+    {
+        var trimmed = key.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            trimmed = uri.AbsolutePath;
+        }
+
+        const string uploadsPrefix = "/uploads/";
+        var uploadsIndex = trimmed.IndexOf(uploadsPrefix, StringComparison.OrdinalIgnoreCase);
+        if (uploadsIndex >= 0)
+        {
+            trimmed = trimmed[(uploadsIndex + uploadsPrefix.Length)..];
+        }
+
+        return trimmed.TrimStart('/', '\\');
     }
 
     private static string GetContentType(string path)

@@ -75,7 +75,8 @@ public sealed class ShippingRatesController(ISender sender) : ControllerBase
             request.DestinationType,
             request.OrderSubtotal,
             request.Currency,
-            request.PackageItems?.Select(item => new ShippingPackageItem(item.Quantity, item.WeightKg, item.LengthCm, item.WidthCm, item.HeightCm)).ToList()), cancellationToken));
+            request.PackageItems?.Select(item => new ShippingPackageItem(item.Quantity, item.WeightKg, item.LengthCm, item.WidthCm, item.HeightCm)).ToList(),
+            User.IsInRole(ApiRoles.Customer) ? User.GetUserId() : null), cancellationToken));
 
     [Authorize(Roles = ApiRoles.Administrator)]
     [HttpPost]
@@ -142,7 +143,7 @@ public sealed class ShipmentsController(ISender sender) : ControllerBase
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPatch("{id:guid}/status")]
     public async Task<IActionResult> ChangeStatus(Guid id, ChangeShipmentStatusRequest request, CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new ChangeShipmentStatusCommand(id, request.Status, request.Observation), cancellationToken));
+        => this.ToActionResult(await sender.Send(new ChangeShipmentStatusCommand(id, request.Status, request.Observation, User.GetUserId()), cancellationToken));
 
     private async Task<IActionResult?> EnsureCanAccessOrder(Guid orderId, CancellationToken cancellationToken)
     {

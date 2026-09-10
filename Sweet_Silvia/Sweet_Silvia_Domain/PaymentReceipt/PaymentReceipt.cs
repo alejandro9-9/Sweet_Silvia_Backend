@@ -42,4 +42,26 @@ public sealed class PaymentReceipt : Entity
 
         return new PaymentReceipt(Guid.NewGuid(), paymentId, fileUrl.Trim(), operationCode?.Trim(), declaredAmount, DateTimeOffset.UtcNow, ReceiptStatus.Uploaded, null);
     }
+
+    public void Approve(string? observation)
+    {
+        if (Status != ReceiptStatus.Uploaded)
+        {
+            throw new InvalidOperationException("Only an uploaded receipt can be approved.");
+        }
+
+        Status = ReceiptStatus.Approved;
+        Observation = observation?.Trim();
+    }
+
+    public void Reject(string? observation)
+    {
+        if (Status != ReceiptStatus.Uploaded)
+        {
+            throw new InvalidOperationException("Only an uploaded receipt can be rejected.");
+        }
+
+        Status = ReceiptStatus.Rejected;
+        Observation = observation?.Trim();
+    }
 }

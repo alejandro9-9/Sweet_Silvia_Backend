@@ -4,4 +4,5 @@ using System.Collections.Generic;
 using System.Text;
 
 namespace Sweet_Silvia_Domain.Category;
+
 public sealed record CategoryUpdatedEvent(Guid Id) : IDomainEvent;

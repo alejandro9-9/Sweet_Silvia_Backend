@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.Abstractions.Storage;
@@ -17,12 +18,28 @@ namespace Sweet_Silvia_Api.Controllers.Payments;
 
 [ApiController]
 [Route("api/payment-methods")]
-public sealed class PaymentMethodsController(ISender sender) : ControllerBase
+public sealed class PaymentMethodsController(ISender sender, IConfiguration configuration) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
-        => this.ToActionResult(await sender.Send(new GetPaymentMethodsQuery(true), cancellationToken));
+    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)
+    {
+        var result = await sender.Send(new GetPaymentMethodsQuery(onlyActive || !User.IsInRole(ApiRoles.Administrator)), cancellationToken);
+        if (result.IsFailure)
+        {
+            return this.ToActionResult(result);
+        }
+
+        if (!User.IsInRole(ApiRoles.Administrator) && !IsIzipayReady())
+        {
+            result.Value.RemoveAll(method =>
+                method.Type == PaymentMethodType.Gateway &&
+                method.RequiresExternalIntegration &&
+                string.Equals(method.Name, "Izipay", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Ok(result.Value);
+    }
 
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
@@ -43,11 +60,40 @@ public sealed class PaymentMethodsController(ISender sender) : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new DeletePaymentMethodCommand(id), cancellationToken));
+
+    private bool IsIzipayReady()
+    {
+        var options = configuration.GetSection("Izipay");
+        var notificationUrl = options["NotificationUrl"];
+        var termsUrl = options["TermsAndConditionsUrl"];
+
+        return bool.TryParse(options["Enabled"], out var enabled) &&
+               enabled &&
+               HasConfiguredValue(options["MerchantCode"]) &&
+               HasConfiguredValue(options["Username"]) &&
+               HasConfiguredValue(options["Password"]) &&
+               HasConfiguredValue(options["PublicKey"]) &&
+               HasConfiguredValue(options["HashKey"]) &&
+               IsPublicHttpsUrl(notificationUrl) &&
+               IsPublicHttpsUrl(termsUrl);
+    }
+
+    private static bool HasConfiguredValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           !value.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) &&
+           !value.Contains("your-", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPublicHttpsUrl(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+           uri.Scheme == Uri.UriSchemeHttps &&
+           !uri.IsLoopback &&
+           !uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) &&
+           !uri.Host.Contains("your-", StringComparison.OrdinalIgnoreCase);
 }
 
 [ApiController]
 [Route("api/payments")]
-public sealed class PaymentsController(ISender sender) : ControllerBase
+public sealed class PaymentsController(ISender sender, IConfiguration configuration) : ControllerBase
 {
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpGet]
@@ -98,6 +144,15 @@ public sealed class PaymentsController(ISender sender) : ControllerBase
     [HttpPost("izipay/payment-link")]
     public async Task<IActionResult> GenerateIzipayPaymentLink(GenerateIzipayPaymentLinkRequest request, CancellationToken cancellationToken)
     {
+        if (!IsIzipayReady())
+        {
+            return Conflict(new
+            {
+                code = "Izipay.NotAvailable",
+                message = "Izipay estara disponible cuando la tienda este desplegada y las URLs publicas hayan sido configuradas."
+            });
+        }
+
         var access = await EnsureCanAccessOrder(request.OrderId, cancellationToken);
         if (access is not null)
         {
@@ -116,24 +171,62 @@ public sealed class PaymentsController(ISender sender) : ControllerBase
             cancellationToken));
     }
 
+    private bool IsIzipayReady()
+    {
+        var options = configuration.GetSection("Izipay");
+        return bool.TryParse(options["Enabled"], out var enabled) &&
+               enabled &&
+               HasConfiguredValue(options["MerchantCode"]) &&
+               HasConfiguredValue(options["Username"]) &&
+               HasConfiguredValue(options["Password"]) &&
+               HasConfiguredValue(options["PublicKey"]) &&
+               HasConfiguredValue(options["HashKey"]) &&
+               IsPublicHttpsUrl(options["NotificationUrl"]) &&
+               IsPublicHttpsUrl(options["TermsAndConditionsUrl"]);
+    }
+
+    private static bool HasConfiguredValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           !value.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) &&
+           !value.Contains("your-", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPublicHttpsUrl(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+           uri.Scheme == Uri.UriSchemeHttps &&
+           !uri.IsLoopback &&
+           !uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) &&
+           !uri.Host.Contains("your-", StringComparison.OrdinalIgnoreCase);
+
     [AllowAnonymous]
     [HttpPost("izipay/notifications")]
     public async Task<IActionResult> ReceiveIzipayNotification(
         [FromHeader(Name = "transactionId")] string? transactionId,
+        [FromHeader(Name = "Signature")] string? signatureHeader,
         IzipayNotificationRequest request,
         CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(
+    {
+        if (!IsIzipayReady())
+        {
+            return Conflict(new
+            {
+                code = "Izipay.NotAvailable",
+                message = "Izipay estara disponible cuando la tienda este desplegada y las URLs publicas hayan sido configuradas."
+            });
+        }
+
+        return this.ToActionResult(await sender.Send(
             new ProcessIzipayNotificationCommand(
                 transactionId ?? string.Empty,
                 request.TransactionId,
                 request.Code,
                 request.Message,
                 request.PayloadHttp,
-                request.Signature,
+                string.IsNullOrWhiteSpace(signatureHeader) ? request.Signature : signatureHeader,
                 request.Response is null
                     ? null
                     : new IzipayNotificationResponseData(request.Response.Order)),
             cancellationToken));
+    }
 
     private async Task<IActionResult?> EnsureCanAccessOrder(Guid orderId, CancellationToken cancellationToken)
     {
@@ -206,18 +299,30 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
                 false),
             cancellationToken);
 
-        var result = await sender.Send(
-            new UploadPaymentReceiptCommand(
-                request.PaymentId,
-                storedFile.Key,
-                request.OperationCode,
-                request.DeclaredAmount,
-                request.Currency),
-            cancellationToken);
+        try
+        {
+            var result = await sender.Send(
+                new UploadPaymentReceiptCommand(
+                    request.PaymentId,
+                    storedFile.Key,
+                    request.OperationCode,
+                    request.DeclaredAmount,
+                    request.Currency),
+                cancellationToken);
 
-        return result.IsSuccess
-            ? Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key })
-            : BadRequest(result.Error);
+            if (result.IsFailure)
+            {
+                await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+                return BadRequest(result.Error);
+            }
+
+            return Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key });
+        }
+        catch
+        {
+            await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+            throw;
+        }
     }
 
     [Authorize(Roles = ApiRoles.AnyAuthenticated)]

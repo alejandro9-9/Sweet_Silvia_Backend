@@ -4,6 +4,8 @@ using Sweet_Silvia_Application.Shipment;
 using Sweet_Silvia_Application.ShipmentEvent;
 using Sweet_Silvia_Application.ShippingRate;
 using Sweet_Silvia_Domain.Abstractions;
+using Sweet_Silvia_Domain.Cart;
+using Sweet_Silvia_Domain.CartItem;
 using Sweet_Silvia_Domain.Courier;
 using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.Shared.Enums;
@@ -17,6 +19,10 @@ using ShipmentEntity = Sweet_Silvia_Domain.Shipment.Shipment;
 using ShipmentEventEntity = Sweet_Silvia_Domain.ShipmentEvent.ShipmentEvent;
 using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
 using OrderEntity = Sweet_Silvia_Domain.Order.Order;
+using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
+using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
+using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
 
 namespace Sweet_Silvia_Application.Courier;
 
@@ -216,7 +222,10 @@ internal sealed class CalculateShippingCostQueryHandler(
     IRepository<DepartmentEntity> departments,
     IRepository<ProvinceEntity> provinces,
     IRepository<DistrictEntity> districts,
-    IRepository<CourierEntity> couriers)
+    IRepository<CourierEntity> couriers,
+    IRepository<CartEntity> carts,
+    IRepository<CartItemEntity> cartItems,
+    IRepository<ProductVariantEntity> variants)
     : IQueryHandler<CalculateShippingCostQuery, ShippingCostResponse>
 {
     public Task<Result<ShippingCostResponse>> Handle(CalculateShippingCostQuery request, CancellationToken cancellationToken)
@@ -248,7 +257,19 @@ internal sealed class CalculateShippingCostQueryHandler(
         }
 
         var baseCost = rate.CalculateCost(Money.Create(request.OrderSubtotal, request.Currency));
-        var volumePricing = ShippingVolumeCalculator.Calculate(request.DestinationType, request.PackageItems);
+        // Package measurements must come from server-owned catalog data. Until
+        // dimensions are stored per variant, use one deterministic quantity-based
+        // package for both the quote and order creation paths.
+        var packageItems = request.CartUserId.HasValue
+            ? (from cart in carts.Query()
+               join item in cartItems.Query() on cart.Id equals item.CartId
+               join variant in variants.Query() on item.ProductVariantId equals variant.Id
+               where cart.UserId == request.CartUserId.Value && cart.IsActive && variant.IsActive
+               select new ShippingPackageItem(item.Quantity, variant.ShippingWeightKg, variant.ShippingLengthCm, variant.ShippingWidthCm, variant.ShippingHeightCm)).ToList()
+            : null;
+        var volumePricing = request.CartUserId.HasValue
+            ? ShippingVolumeCalculator.Calculate(request.DestinationType, packageItems)
+            : ShippingVolumeCalculator.CalculateForQuantity(request.DestinationType, request.PackageItems?.Sum(item => Math.Max(item.Quantity, 0)) ?? 0);
         var finalCost = Money.Create(baseCost.Amount + volumePricing.Surcharge, baseCost.Currency);
 
         return Task.FromResult(Result.Success(new ShippingCostResponse(
@@ -335,6 +356,11 @@ internal static class ShippingVolumeCalculator
             decimal.Round(chargeableWeightKg, 2),
             weightSurcharge + bulkySurcharge);
     }
+
+    public static ShippingVolumePricing CalculateForQuantity(ShippingDestinationType destinationType, int quantity)
+        => Calculate(destinationType, quantity > 0
+            ? [new ShippingPackageItem(quantity, null, null, null, null)]
+            : null);
 
     private static decimal GetVolumeCm3(ShippingPackageItem item)
     {
@@ -436,6 +462,8 @@ internal sealed class RegisterExternalShipmentCommandHandler(IRepository<Shipmen
 internal sealed class ChangeShipmentStatusCommandHandler(
     IRepository<ShipmentEntity> shipments,
     IRepository<ShipmentEventEntity> events,
+    IRepository<OrderEntity> orders,
+    IRepository<OrderStatusHistoryEntity> orderHistories,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ChangeShipmentStatusCommand>
 {
@@ -447,8 +475,47 @@ internal sealed class ChangeShipmentStatusCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Shipment", request.ShipmentId));
         }
 
+        var order = await orders.GetByIdAsync(shipment.OrderId, cancellationToken);
+        if (order is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Order", shipment.OrderId));
+        }
+
+        if (request.ChangedByUserId == Guid.Empty)
+        {
+            return Result.Failure(ApplicationErrors.Conflict("Shipment.InvalidActor", "The user changing the shipment status is required."));
+        }
+
+        if (request.Status == ShipmentStatus.InTransit && order.Status != OrderStatus.Preparing)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Shipment.OrderNotPreparing",
+                "The order must be in Preparing status before the shipment enters transit."));
+        }
+
+        if (request.Status == ShipmentStatus.Delivered && order.Status != OrderStatus.Shipped)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Shipment.OrderNotShipped",
+                "The order must be Shipped before the shipment is delivered."));
+        }
+
         shipment.ChangeStatus(request.Status, request.Observation);
         events.Add(ShipmentEventEntity.Create(request.ShipmentId, request.Status, request.Observation ?? $"Shipment status changed to {request.Status}.", null, DateTimeOffset.UtcNow));
+
+        if (request.Status == ShipmentStatus.InTransit)
+        {
+            var previousStatus = order.Status;
+            order.ChangeStatus(OrderStatus.Shipped, request.ChangedByUserId, request.Observation);
+            orderHistories.Add(OrderStatusHistoryEntity.Create(order.Id, previousStatus, OrderStatus.Shipped, request.ChangedByUserId, request.Observation));
+        }
+        else if (request.Status == ShipmentStatus.Delivered)
+        {
+            var previousStatus = order.Status;
+            order.ChangeStatus(OrderStatus.Delivered, request.ChangedByUserId, request.Observation);
+            orderHistories.Add(OrderStatusHistoryEntity.Create(order.Id, previousStatus, OrderStatus.Delivered, request.ChangedByUserId, request.Observation));
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }

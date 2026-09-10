@@ -9,9 +9,12 @@ using Sweet_Silvia_Domain.CartAppliedCoupon;
 using Sweet_Silvia_Domain.CartItem;
 using Sweet_Silvia_Domain.Coupon;
 using Sweet_Silvia_Domain.Courier;
+using Sweet_Silvia_Domain.District;
 using Sweet_Silvia_Domain.Order;
+using Sweet_Silvia_Domain.OlvaAgency;
 using Sweet_Silvia_Domain.Shared.Enums;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
+using Sweet_Silvia_Domain.StockMovement;
 using AddressEntity = Sweet_Silvia_Domain.Address.Address;
 using CartAppliedCouponEntity = Sweet_Silvia_Domain.CartAppliedCoupon.CartAppliedCoupon;
 using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
@@ -20,6 +23,7 @@ using CouponEntity = Sweet_Silvia_Domain.Coupon.Coupon;
 using CouponRestrictionEntity = Sweet_Silvia_Domain.CouponRestriction.CouponRestriction;
 using CouponUsageEntity = Sweet_Silvia_Domain.CouponUsage.CouponUsage;
 using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
+using DistrictEntity = Sweet_Silvia_Domain.District.District;
 using CourierEntity = Sweet_Silvia_Domain.Courier.Courier;
 using ProductEntity = Sweet_Silvia_Domain.Product.Product;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
@@ -27,6 +31,9 @@ using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
 using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
 using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory;
+using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
+using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
+using StockMovementEntity = Sweet_Silvia_Domain.StockMovement.StockMovement;
 
 namespace Sweet_Silvia_Application.Order;
 
@@ -43,8 +50,12 @@ internal sealed class CreateOrderCommandHandler(
     IRepository<ProductEntity> products,
     IRepository<ProductVariantEntity> variants,
     IRepository<DepartmentEntity> departments,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DistrictEntity> districts,
     IRepository<CourierEntity> couriers,
     IRepository<ShippingRateEntity> shippingRates,
+    IRepository<OlvaAgencyEntity> olvaAgencies,
+    IRepository<StockMovementEntity> stockMovements,
     IUnitOfWork unitOfWork)
     : ICommandHandler<CreateOrderCommand, Guid>
 {
@@ -93,6 +104,38 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Shipping.InvalidRate",
                 "The selected shipping rate does not apply to the address."));
+        }
+
+        var province = provinces.Query()
+            .FirstOrDefault(item => item.Id == address.ProvinceId && item.IsActive);
+        var district = districts.Query()
+            .FirstOrDefault(item => item.Id == address.DistrictId && item.IsActive);
+
+        if (province is null || district is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("ShippingLocation"));
+        }
+
+        if (department.DestinationType == ShippingDestinationType.Province && !request.ShippingAgencyId.HasValue)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.AgencyRequired",
+                "A pickup agency is required for province shipments."));
+        }
+
+        if (request.ShippingAgencyId.HasValue)
+        {
+            var shippingAgency = await olvaAgencies.GetByIdAsync(request.ShippingAgencyId.Value, cancellationToken);
+            if (shippingAgency is null || !shippingAgency.IsActive ||
+                !string.Equals(shippingAgency.Department, department.Name, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(shippingAgency.Province, province.Name, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(shippingAgency.District) &&
+                 !string.Equals(shippingAgency.District, district.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Shipping.InvalidAgency",
+                    "The selected agency is not available for the delivery address."));
+            }
         }
 
         var cart = carts.Query().FirstOrDefault(item => item.UserId == request.UserId && item.IsActive);
@@ -213,13 +256,19 @@ internal sealed class CreateOrderCommandHandler(
         var totalQuantity = lines.Sum(item => item.Quantity);
         var volumePricing = ShippingVolumeCalculator.Calculate(
             department.DestinationType,
-            [new ShippingPackageItem(totalQuantity, null, null, null, null)]);
+            lines.Select(line => new ShippingPackageItem(
+                line.Quantity,
+                line.Variant.ShippingWeightKg,
+                line.Variant.ShippingLengthCm,
+                line.Variant.ShippingWidthCm,
+                line.Variant.ShippingHeightCm)).ToList());
         var shippingCost = Money.Create(baseShippingCost.Amount + volumePricing.Surcharge, storeCurrency);
         var total = Money.Create(subtotal.Amount - discountTotal.Amount + shippingCost.Amount, storeCurrency);
 
         var order = OrderEntity.Create(
             request.UserId,
             request.AddressId,
+            request.ShippingAgencyId,
             selectedCoupons.FirstOrDefault(item => item.Coupon.Scope == CouponScope.Order).Coupon?.Id ?? selectedCoupons.FirstOrDefault().Coupon?.Id,
             selectedCoupons.FirstOrDefault().Applied?.AppliedQuantity,
             subtotal,
@@ -230,6 +279,17 @@ internal sealed class CreateOrderCommandHandler(
         orders.Add(order);
         foreach (var line in lines)
         {
+            var previousStock = line.Variant.PhysicalStock;
+            line.Variant.DecreaseStock(line.Quantity);
+            stockMovements.Add(StockMovementEntity.Create(
+                line.Variant.Id,
+                order.Id,
+                StockMovementType.Reservation,
+                line.Quantity,
+                previousStock,
+                line.Variant.PhysicalStock,
+                "Stock reserved while the customer completes payment."));
+
             AddOrderItemSnapshot(order, line, line.DiscountedQuantity, line.DiscountAmount, orderItems, storeCurrency);
             AddOrderItemSnapshot(order, line, line.Quantity - line.DiscountedQuantity, 0m, orderItems, storeCurrency);
         }
@@ -410,6 +470,8 @@ internal sealed class AddOrderItemCommandHandler(
 internal sealed class ChangeOrderStatusCommandHandler(
     IRepository<OrderEntity> orders,
     IRepository<OrderStatusHistoryEntity> histories,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<StockMovementEntity> stockMovements,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ChangeOrderStatusCommand>
 {
@@ -426,6 +488,41 @@ internal sealed class ChangeOrderStatusCommandHandler(
         if (order is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("Order", request.OrderId));
+        }
+
+        if ((request.Status is OrderStatus.Cancelled or OrderStatus.OutOfStock) &&
+            order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Order.InvalidCancellation",
+                "Only unpaid orders can be cancelled from the operations panel."));
+        }
+
+        if (request.Status is OrderStatus.Cancelled or OrderStatus.OutOfStock)
+        {
+            var reservations = stockMovements.Query()
+                .Where(movement => movement.OrderId == order.Id && movement.Type == StockMovementType.Reservation)
+                .ToList();
+
+            foreach (var reservation in reservations)
+            {
+                var variant = await variants.GetByIdAsync(reservation.ProductVariantId, cancellationToken);
+                if (variant is null)
+                {
+                    return Result.Failure(ApplicationErrors.NotFound("ProductVariant", reservation.ProductVariantId));
+                }
+
+                var previousStock = variant.PhysicalStock;
+                variant.IncreaseStock(reservation.Quantity);
+                stockMovements.Add(StockMovementEntity.Create(
+                    variant.Id,
+                    order.Id,
+                    StockMovementType.Cancellation,
+                    reservation.Quantity,
+                    previousStock,
+                    variant.PhysicalStock,
+                    "Stock reservation released because the order was cancelled."));
+            }
         }
 
         var previousStatus = order.Status;
@@ -509,6 +606,7 @@ internal static class OrderMappings
             order.Id,
             order.UserId,
             order.AddressId,
+            order.ShippingAgencyId,
             order.CouponId,
             order.CouponAppliedQuantity,
             order.Status,

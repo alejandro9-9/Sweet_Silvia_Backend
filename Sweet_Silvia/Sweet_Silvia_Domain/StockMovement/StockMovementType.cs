@@ -5,5 +5,6 @@ public enum StockMovementType
     Sale = 1,
     ManualAdjustment = 2,
     Return = 3,
-    Cancellation = 4
+    Cancellation = 4,
+    Reservation = 5
 }

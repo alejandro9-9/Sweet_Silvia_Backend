@@ -9,6 +9,7 @@ using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.RefreshToken;
 using Sweet_Silvia_Domain.Role;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
+using Sweet_Silvia_Domain.User;
 using UserEntity = Sweet_Silvia_Domain.User.User;
 using RoleEntity = Sweet_Silvia_Domain.Role.Role;
 using RefreshTokenEntity = Sweet_Silvia_Domain.RefreshToken.RefreshToken;
@@ -58,6 +59,7 @@ internal sealed class CreateUserCommandHandler(
 internal sealed class ChangeUserRoleCommandHandler(
     IRepository<UserEntity> users,
     IRepository<RoleEntity> roles,
+    IRefreshTokenRepository refreshTokens,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ChangeUserRoleCommand>
 {
@@ -77,7 +79,22 @@ internal sealed class ChangeUserRoleCommandHandler(
                 "The selected role does not exist or is inactive."));
         }
 
+        if (user.RoleId == RoleIds.Administrator && request.RoleId != RoleIds.Administrator &&
+            users.Query().Count(item => item.RoleId == RoleIds.Administrator && item.Status == UserStatus.Active) <= 1)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "User.LastAdministrator",
+                "The last active administrator cannot be demoted."));
+        }
+
         user.ChangeRole(request.RoleId);
+        var now = DateTimeOffset.UtcNow;
+        var activeTokens = await refreshTokens.GetActiveByUserIdAsync(request.UserId, cancellationToken);
+        foreach (var token in activeTokens)
+        {
+            token.Revoke(now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -111,6 +128,7 @@ internal sealed class UpdateUserProfileCommandHandler(
 
 internal sealed class BlockUserCommandHandler(
     IRepository<UserEntity> users,
+    IRefreshTokenRepository refreshTokens,
     IUnitOfWork unitOfWork)
     : ICommandHandler<BlockUserCommand>
 {
@@ -122,7 +140,22 @@ internal sealed class BlockUserCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("User", request.UserId));
         }
 
+        if (user.RoleId == RoleIds.Administrator &&
+            users.Query().Count(item => item.RoleId == RoleIds.Administrator && item.Status == UserStatus.Active) <= 1)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "User.LastAdministrator",
+                "The last active administrator cannot be blocked."));
+        }
+
         user.Block();
+        var now = DateTimeOffset.UtcNow;
+        var activeTokens = await refreshTokens.GetActiveByUserIdAsync(request.UserId, cancellationToken);
+        foreach (var token in activeTokens)
+        {
+            token.Revoke(now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -255,7 +288,6 @@ internal sealed class RefreshSessionCommandHandler(
     IRefreshTokenRepository refreshTokens,
     IRefreshTokenService refreshTokenService,
     IJwtTokenGenerator jwtTokenGenerator,
-    IAuditLogWriter auditLogWriter,
     IUnitOfWork unitOfWork)
     : ICommandHandler<RefreshSessionCommand, LoginResponse>
 {
@@ -295,19 +327,6 @@ internal sealed class RefreshSessionCommandHandler(
             now));
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await auditLogWriter.WriteAsync(
-            user.Id,
-            role.Name,
-            "User.SessionRefreshed",
-            "RefreshToken",
-            token.Id,
-            request.IpAddress,
-            request.UserAgent,
-            null,
-            new { request.DeviceInfo },
-            null,
-            cancellationToken);
-
         var accessToken = jwtTokenGenerator.GenerateToken(LoginCommandHandler.CreateClaims(user, role));
         return new LoginResponse(accessToken, nextRefreshToken.Token, nextRefreshToken.ExpiresAt);
     }

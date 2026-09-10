@@ -46,6 +46,13 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
         }
 
         var payload = GetPayload(documentResult.Value.RootElement);
+        var responseCode = GetString(documentResult.Value.RootElement, "code") ?? GetString(payload, "code");
+        if (!IsSuccessCode(responseCode))
+        {
+            return Result.Failure<IzipayPaymentLinkGatewayResponse>(
+                new Error("Izipay.ProviderRejected", GetString(documentResult.Value.RootElement, "message", "error", "description") ?? $"Izipay rejected the payment link request ({responseCode})."));
+        }
+
         var paymentLinkId = GetString(payload, "paymentLinkId", "id", "linkId");
         var paymentUrl = GetString(payload, "urL_PaymentLink", "paymentUrl", "url", "link");
 
@@ -73,6 +80,7 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
             {
                 requestSource = "ECOMMERCE",
                 merchantCode = options.MerchantCode.Trim(),
+                // Izipay expects a unique order reference, not the merchant code.
                 orderNumber = transactionId,
                 publicKey = options.PublicKey.Trim(),
                 amount = "0.00"
@@ -88,6 +96,13 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
         }
 
         var payload = GetPayload(documentResult.Value.RootElement);
+        var responseCode = GetString(documentResult.Value.RootElement, "code") ?? GetString(payload, "code");
+        if (!IsSuccessCode(responseCode))
+        {
+            return Result.Failure<string>(
+                new Error("Izipay.ProviderRejected", GetString(documentResult.Value.RootElement, "message", "error", "description") ?? $"Izipay rejected the token request ({responseCode})."));
+        }
+
         var token = GetString(payload, "accessToken", "token", "bearerToken", "sessionToken");
 
         return string.IsNullOrWhiteSpace(token)
@@ -100,7 +115,6 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
         return new
         {
             merchantCode = options.MerchantCode.Trim(),
-            transactionId = request.TransactionId,
             productDescription = request.ProductDescription,
             amount = request.Amount.ToString("0.00", CultureInfo.InvariantCulture),
             currency = request.Currency,
@@ -109,11 +123,12 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
             payMethod = request.PayMethod,
             email_Notification = request.Billing.Email.Trim(),
             referenceCode = request.TransactionId,
-            languageUsed = "ES",
+            languageUsed = "ESP",
             urlIpn = options.NotificationUrl.Trim(),
             urL_Terms_and_Conditions = options.TermsAndConditionsUrl.Trim(),
             billing = ToContactBody(request.Billing),
-            shipping = ToContactBody(request.Shipping)
+            shipping = ToContactBody(request.Shipping),
+            customFields = Array.Empty<object>()
         };
     }
 
@@ -152,6 +167,7 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
             string.IsNullOrWhiteSpace(options.HashKey) ||
             string.IsNullOrWhiteSpace(options.NotificationUrl) ||
             string.IsNullOrWhiteSpace(options.TermsAndConditionsUrl) ||
+            !Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _) ||
             !Uri.TryCreate(options.NotificationUrl, UriKind.Absolute, out _) ||
             !Uri.TryCreate(options.TermsAndConditionsUrl, UriKind.Absolute, out _) ||
             IsPlaceholder(options.HashKey) ||
@@ -252,6 +268,11 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
 
     private static string NormalizePath(string path)
         => path.Trim().TrimStart('/');
+
+    private static bool IsSuccessCode(string? code)
+        => string.IsNullOrWhiteSpace(code) ||
+           string.Equals(code, "00", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(code, "000", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPlaceholder(string value)
         => value.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) ||

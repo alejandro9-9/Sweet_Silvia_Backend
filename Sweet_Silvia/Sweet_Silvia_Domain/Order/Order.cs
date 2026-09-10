@@ -10,11 +10,12 @@ public sealed class Order : Entity
 
     private Order() { }
 
-    public Order(Guid id, Guid userId, Guid addressId, Guid? couponId, int? couponAppliedQuantity, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public Order(Guid id, Guid userId, Guid addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
         : base(id)
     {
         UserId = userId;
         AddressId = addressId;
+        ShippingAgencyId = shippingAgencyId;
         CouponId = couponId;
         CouponAppliedQuantity = couponAppliedQuantity;
         Status = status;
@@ -27,6 +28,7 @@ public sealed class Order : Entity
 
     public Guid UserId { get; private set; }
     public Guid AddressId { get; private set; }
+    public Guid? ShippingAgencyId { get; private set; }
     public Guid? CouponId { get; private set; }
     public int? CouponAppliedQuantity { get; private set; }
     public OrderStatus Status { get; private set; }
@@ -38,7 +40,7 @@ public sealed class Order : Entity
     public Money Total { get; private set; } = null!;
     public IReadOnlyCollection<OrderItemEntity> Items => _items.AsReadOnly();
 
-    public static Order Create(Guid userId, Guid addressId, Guid? couponId, int? couponAppliedQuantity, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public static Order Create(Guid userId, Guid addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, Money subtotal, Money discountTotal, Money shippingCost, Money total)
     {
         Validate(userId, addressId, subtotal, discountTotal, shippingCost, total);
 
@@ -47,7 +49,7 @@ public sealed class Order : Entity
             throw new ArgumentException("Applied coupon quantity should be greater than zero.", nameof(couponAppliedQuantity));
         }
 
-        var result = new Order(Guid.NewGuid(), userId, addressId, couponId, couponAppliedQuantity, OrderStatus.PendingReceipt, DateTimeOffset.UtcNow, subtotal, discountTotal, shippingCost, total);
+        var result = new Order(Guid.NewGuid(), userId, addressId, shippingAgencyId, couponId, couponAppliedQuantity, OrderStatus.PendingReceipt, DateTimeOffset.UtcNow, subtotal, discountTotal, shippingCost, total);
         result.AddDomainEvent(new OrderCreatedEvent(result.Id));
         return result;
     }
@@ -84,7 +86,7 @@ public sealed class Order : Entity
 
         return current switch
         {
-            OrderStatus.PendingReceipt => next is OrderStatus.ReceiptInReview or OrderStatus.Cancelled or OrderStatus.OutOfStock,
+            OrderStatus.PendingReceipt => next is OrderStatus.ReceiptInReview or OrderStatus.Paid or OrderStatus.Cancelled or OrderStatus.OutOfStock,
             OrderStatus.ReceiptInReview => next is OrderStatus.PendingReceipt or OrderStatus.Paid or OrderStatus.Cancelled or OrderStatus.OutOfStock,
             OrderStatus.Paid => next is OrderStatus.Preparing,
             OrderStatus.Preparing => next is OrderStatus.Shipped,

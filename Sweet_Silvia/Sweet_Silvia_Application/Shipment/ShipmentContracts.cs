@@ -9,7 +9,7 @@ public sealed record CreateShipmentCommand(Guid OrderId, Guid CourierId, decimal
 
 public sealed record RegisterExternalShipmentCommand(Guid ShipmentId, string TrackingCode, string? ExternalShipmentCode, DateTimeOffset? EstimatedDeliveryAt) : ICommand;
 
-public sealed record ChangeShipmentStatusCommand(Guid ShipmentId, ShipmentStatus Status, string? Observation) : ICommand;
+public sealed record ChangeShipmentStatusCommand(Guid ShipmentId, ShipmentStatus Status, string? Observation, Guid ChangedByUserId) : ICommand;
 
 public sealed record GetShipmentByIdQuery(Guid Id) : IQuery<ShipmentResponse>;
 

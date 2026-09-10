@@ -36,7 +36,7 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<PaymentEnt
         builder.HasIndex(entity => entity.GatewayTransactionId).IsUnique();
         builder.HasIndex(entity => entity.OrderId)
             .IsUnique()
-            .HasFilter("\"Status\" = 'PendingGateway'");
+            .HasFilter("\"Status\" IN ('PendingReceipt', 'InReview', 'PendingGateway', 'Approved')");
         builder.HasOne<OrderEntity>().WithMany().HasForeignKey(entity => entity.OrderId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<PaymentMethodEntity>().WithMany().HasForeignKey(entity => entity.PaymentMethodId).OnDelete(DeleteBehavior.Restrict);
         builder.Property<uint>("xmin").IsRowVersion();

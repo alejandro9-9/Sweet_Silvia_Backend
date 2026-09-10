@@ -53,7 +53,7 @@ public sealed class OrdersController(ISender sender) : ControllerBase
             return Forbid();
         }
 
-        return this.ToCreatedResult(await sender.Send(new CreateOrderCommand(User.GetUserId(), request.AddressId, request.ShippingRateId, request.CouponId), cancellationToken));
+        return this.ToCreatedResult(await sender.Send(new CreateOrderCommand(User.GetUserId(), request.AddressId, request.ShippingRateId, request.ShippingAgencyId, request.CouponId), cancellationToken));
     }
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
@@ -100,5 +100,5 @@ public sealed class OrderStatusHistoryController(ISender sender) : ControllerBas
         => this.ToActionResult(await sender.Send(new GetOrderStatusHistoryQuery(orderId), cancellationToken));
 }
 
-public sealed record CreateOrderRequest(Guid AddressId, Guid ShippingRateId, Guid? CouponId = null);
+public sealed record CreateOrderRequest(Guid AddressId, Guid ShippingRateId, Guid? ShippingAgencyId = null, Guid? CouponId = null);
 public sealed record ChangeOrderStatusRequest(OrderStatus Status, string? Observation);

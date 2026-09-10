@@ -35,6 +35,20 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
         return new FileStorageResult(url, key);
     }
 
+    public async Task DeleteAsync(string keyOrUrl, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(options.S3BucketName) || !TryExtractKey(keyOrUrl, out var key))
+        {
+            return;
+        }
+
+        await s3Client.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = options.S3BucketName,
+            Key = key
+        }, cancellationToken);
+    }
+
     public async Task<FileStorageReadResult?> OpenPrivateReadAsync(string key, CancellationToken cancellationToken = default)
     {
         if (!IsSafeKey(key))
@@ -86,5 +100,23 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
         var normalizedKey = key.Trim().Replace('\\', '/');
         return !normalizedKey.StartsWith('/') &&
                normalizedKey.Split('/', StringSplitOptions.RemoveEmptyEntries).All(segment => segment is not "." and not "..");
+    }
+
+    private static bool TryExtractKey(string keyOrUrl, out string key)
+    {
+        key = string.Empty;
+        if (string.IsNullOrWhiteSpace(keyOrUrl))
+        {
+            return false;
+        }
+
+        var trimmed = keyOrUrl.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            trimmed = uri.AbsolutePath;
+        }
+
+        key = trimmed.TrimStart('/', '\\').Replace('\\', '/');
+        return IsSafeKey(key);
     }
 }

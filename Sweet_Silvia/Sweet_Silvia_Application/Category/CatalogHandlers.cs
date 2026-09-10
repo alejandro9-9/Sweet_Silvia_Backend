@@ -250,7 +250,7 @@ internal sealed class GetProductsQueryHandler(
     {
         var query = products.Query()
             .Where(product =>
-                product.IsActive &&
+                (!request.OnlyActive || product.IsActive) &&
                 categories.Query().Any(category => category.Id == product.CategoryId && category.IsActive) &&
                 (product.CollectionId == null || collections.Query().Any(collection => collection.Id == product.CollectionId && collection.IsActive)));
 
@@ -293,7 +293,11 @@ internal sealed class CreateProductVariantCommandHandler(
             request.Color,
             sku,
             request.PhysicalStock,
-            request.Price.HasValue ? Money.Create(request.Price.Value, request.Currency) : null);
+            request.Price.HasValue ? Money.Create(request.Price.Value, request.Currency) : null,
+            request.ShippingWeightKg,
+            request.ShippingLengthCm,
+            request.ShippingWidthCm,
+            request.ShippingHeightCm);
 
         variants.Add(variant);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -312,7 +316,14 @@ internal sealed class UpdateProductVariantCommandHandler(IRepository<ProductVari
             return Result.Failure(ApplicationErrors.NotFound("ProductVariant", request.Id));
         }
 
-        variant.Update(request.Size, request.Color, request.Price.HasValue ? Money.Create(request.Price.Value, request.Currency) : null);
+        variant.Update(
+            request.Size,
+            request.Color,
+            request.Price.HasValue ? Money.Create(request.Price.Value, request.Currency) : null,
+            request.ShippingWeightKg,
+            request.ShippingLengthCm,
+            request.ShippingWidthCm,
+            request.ShippingHeightCm);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -396,7 +407,7 @@ internal sealed class GetProductVariantsByProductQueryHandler(
         var query = variants.Query()
             .Where(variant =>
                 variant.ProductId == request.ProductId &&
-                variant.IsActive &&
+                (!request.OnlyActive || variant.IsActive) &&
                 products.Query().Any(product => product.Id == variant.ProductId && product.IsActive));
 
         return Task.FromResult(Result.Success(query.Select(CatalogMappings.ToResponse).ToList()));
@@ -456,6 +467,42 @@ internal sealed class UpdateProductImageCommandHandler(
     }
 }
 
+internal sealed class ReorderProductImagesCommandHandler(
+    IRepository<ProductImageEntity> images,
+    IUnitOfWork unitOfWork)
+    : ICommandHandler<ReorderProductImagesCommand>
+{
+    public async Task<Result> Handle(ReorderProductImagesCommand request, CancellationToken cancellationToken)
+    {
+        var productImages = images.Query()
+            .Where(image => image.ProductId == request.ProductId)
+            .ToList();
+        if (productImages.Count == 0)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("ProductImages", request.ProductId));
+        }
+
+        var requestedIds = request.ImageIds.Distinct().ToList();
+        var existingIds = productImages.Select(image => image.Id).ToHashSet();
+        if (requestedIds.Count != productImages.Count || !requestedIds.All(existingIds.Contains))
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "ProductImage.InvalidOrder",
+                "The image order must contain every image of the product exactly once."));
+        }
+
+        var imageById = productImages.ToDictionary(image => image.Id);
+        for (var index = 0; index < requestedIds.Count; index++)
+        {
+            var image = imageById[requestedIds[index]];
+            image.Update(image.ProductVariantId, image.Url, image.AltText, index + 1, image.IsMain);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
 internal sealed class DeleteProductImageCommandHandler(IRepository<ProductImageEntity> images, IUnitOfWork unitOfWork)
     : ICommandHandler<DeleteProductImageCommand>
 {
@@ -496,6 +543,25 @@ internal sealed class GetProductImagesByProductQueryHandler(
             .ToList();
 
         return Task.FromResult(Result.Success(result));
+    }
+}
+
+internal sealed class GetProductImageByIdQueryHandler(IRepository<ProductImageEntity> images)
+    : IQueryHandler<GetProductImageByIdQuery, ProductImageResponse>
+{
+    public Task<Result<ProductImageResponse>> Handle(GetProductImageByIdQuery request, CancellationToken cancellationToken)
+    {
+        var image = images.Query().FirstOrDefault(item => item.Id == request.Id);
+        return Task.FromResult(image is null
+            ? Result.Failure<ProductImageResponse>(ApplicationErrors.NotFound("ProductImage", request.Id))
+            : Result.Success(new ProductImageResponse(
+                image.Id,
+                image.ProductId,
+                image.ProductVariantId,
+                image.Url,
+                image.AltText,
+                image.Order,
+                image.IsMain)));
     }
 }
 
@@ -611,6 +677,10 @@ internal static class CatalogMappings
             variant.PhysicalStock,
             variant.Price?.Amount,
             variant.Price?.Currency,
+            variant.ShippingWeightKg,
+            variant.ShippingLengthCm,
+            variant.ShippingWidthCm,
+            variant.ShippingHeightCm,
             variant.IsActive);
     }
 }

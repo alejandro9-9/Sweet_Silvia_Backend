@@ -120,11 +120,50 @@ public sealed class Payment : Entity
         AddDomainEvent(new PaymentApprovedEvent(Id));
     }
 
+    public void ApproveCash(Guid reviewedByUserId, string? observation = null)
+    {
+        if (Status != PaymentStatus.PendingReceipt)
+        {
+            throw new InvalidOperationException("Cash payment can only be approved when it is pending.");
+        }
+
+        if (reviewedByUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Reviewer user id is required.", nameof(reviewedByUserId));
+        }
+
+        Status = PaymentStatus.Approved;
+        PaidAt = DateTimeOffset.UtcNow;
+        ReviewedAt = DateTimeOffset.UtcNow;
+        ReviewedByUserId = reviewedByUserId;
+        Observation = observation;
+        AddDomainEvent(new PaymentApprovedEvent(Id));
+    }
+
     public void Reject(Guid reviewedByUserId, string? observation = null)
     {
         if (Status != PaymentStatus.InReview)
         {
             throw new InvalidOperationException("Payment can only be rejected when it is in review.");
+        }
+
+        if (reviewedByUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Reviewer user id is required.", nameof(reviewedByUserId));
+        }
+
+        Status = PaymentStatus.Rejected;
+        ReviewedAt = DateTimeOffset.UtcNow;
+        ReviewedByUserId = reviewedByUserId;
+        Observation = observation;
+        AddDomainEvent(new PaymentRejectedEvent(Id));
+    }
+
+    public void RejectCash(Guid reviewedByUserId, string? observation = null)
+    {
+        if (Status != PaymentStatus.PendingReceipt)
+        {
+            throw new InvalidOperationException("Cash payment can only be rejected when it is pending.");
         }
 
         if (reviewedByUserId == Guid.Empty)
@@ -165,6 +204,17 @@ public sealed class Payment : Entity
         ReviewedAt = DateTimeOffset.UtcNow;
         Observation = observation?.Trim();
         AddDomainEvent(new PaymentRejectedEvent(Id));
+    }
+
+    public void MarkGatewaySettlementPending(string observation)
+    {
+        if (Status != PaymentStatus.PendingGateway)
+        {
+            throw new InvalidOperationException("Only a pending gateway payment can require settlement review.");
+        }
+
+        Observation = observation.Trim();
+        ReviewedAt = DateTimeOffset.UtcNow;
     }
 
     public void ExpireGateway(string? observation = null)
