@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.RefreshToken;
@@ -56,6 +57,7 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost]
     public async Task<IActionResult> Register(RegisterUserRequest request, CancellationToken cancellationToken)
     {

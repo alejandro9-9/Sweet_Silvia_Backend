@@ -8,9 +8,11 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
 {
     public async Task<FileStorageResult> SaveAsync(FileStorageUpload upload, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(options.S3BucketName))
+        var bucketName = GetBucketName(upload.IsPublic);
+        if (string.IsNullOrWhiteSpace(bucketName))
         {
-            throw new InvalidOperationException("FileStorage:S3BucketName is required when FileStorage:Provider is S3.");
+            var setting = upload.IsPublic ? "S3PublicBucketName" : "S3PrivateBucketName";
+            throw new InvalidOperationException($"FileStorage:{setting} is required when FileStorage:Provider is S3.");
         }
 
         var extension = Path.GetExtension(upload.OriginalFileName).ToLowerInvariant();
@@ -18,17 +20,18 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
 
         var request = new PutObjectRequest
         {
-            BucketName = options.S3BucketName,
+            BucketName = bucketName,
             Key = key,
             InputStream = upload.Content,
-            ContentType = upload.ContentType
+            ContentType = upload.ContentType,
+            ServerSideEncryptionMethod = ServerSideEncryptionMethod.AES256
         };
 
         await s3Client.PutObjectAsync(request, cancellationToken);
 
         var url = upload.IsPublic
             ? string.IsNullOrWhiteSpace(options.S3PublicBaseUrl)
-                ? $"https://{options.S3BucketName}.s3.{options.S3Region}.amazonaws.com/{key}"
+                ? $"https://{bucketName}.s3.{options.S3Region}.amazonaws.com/{key}"
                 : $"{options.S3PublicBaseUrl.TrimEnd('/')}/{key}"
             : key;
 
@@ -37,14 +40,21 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
 
     public async Task DeleteAsync(string keyOrUrl, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(options.S3BucketName) || !TryExtractKey(keyOrUrl, out var key))
+        if (!TryExtractKey(keyOrUrl, out var key))
+        {
+            return;
+        }
+
+        var isPublic = Uri.TryCreate(keyOrUrl.Trim(), UriKind.Absolute, out _);
+        var bucketName = GetBucketName(isPublic);
+        if (string.IsNullOrWhiteSpace(bucketName))
         {
             return;
         }
 
         await s3Client.DeleteObjectAsync(new DeleteObjectRequest
         {
-            BucketName = options.S3BucketName,
+            BucketName = bucketName,
             Key = key
         }, cancellationToken);
     }
@@ -60,7 +70,7 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
         {
             using var response = await s3Client.GetObjectAsync(new GetObjectRequest
             {
-                BucketName = options.S3BucketName,
+                BucketName = GetBucketName(isPublic: false),
                 Key = key.Trim().Replace('\\', '/')
             }, cancellationToken);
 
@@ -75,6 +85,12 @@ internal sealed class S3FileStorageService(IAmazonS3 s3Client, FileStorageOption
         {
             return null;
         }
+    }
+
+    private string GetBucketName(bool isPublic)
+    {
+        var configuredBucket = isPublic ? options.S3PublicBucketName : options.S3PrivateBucketName;
+        return string.IsNullOrWhiteSpace(configuredBucket) ? options.S3BucketName : configuredBucket;
     }
 
     private static string NormalizeContainer(string container)

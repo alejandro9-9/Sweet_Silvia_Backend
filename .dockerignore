@@ -1,0 +1,15 @@
+.git/
+.github/
+.vs/
+.vscode/
+**/bin/
+**/obj/
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+Sweet_Silvia/DevMocks/
+Sweet_Silvia/Docs/
+Sweet_Silvia/docker-compose*.yml
+Sweet_Silvia/**/wwwroot/uploads/**
+!Sweet_Silvia/**/wwwroot/uploads/.gitignore

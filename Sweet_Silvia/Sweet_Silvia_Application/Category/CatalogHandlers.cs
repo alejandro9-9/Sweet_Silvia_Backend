@@ -165,12 +165,17 @@ internal sealed class CreateProductCommandHandler(
             return Result.Failure<Guid>(validation.Error);
         }
 
+        var nextDisplayOrder = products.Query()
+            .Where(product => product.IsActive)
+            .Select(product => (int?)product.DisplayOrder)
+            .Max() ?? 0;
         var product = ProductEntity.Create(
             request.CategoryId,
             request.CollectionId,
             request.Name,
             request.Description,
-            Money.Create(request.BasePrice, request.Currency));
+            Money.Create(request.BasePrice, request.Currency),
+            nextDisplayOrder + 1);
 
         products.Add(product);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -205,6 +210,67 @@ internal sealed class UpdateProductCommandHandler(
             Money.Create(request.BasePrice, request.Currency),
             request.CategoryId,
             request.CollectionId);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+internal sealed class MoveProductToTopCommandHandler(IRepository<ProductEntity> products, IUnitOfWork unitOfWork)
+    : ICommandHandler<MoveProductToTopCommand>
+{
+    public async Task<Result> Handle(MoveProductToTopCommand request, CancellationToken cancellationToken)
+    {
+        var orderedProducts = products.Query()
+            .Where(product => product.IsActive)
+            .OrderBy(product => product.DisplayOrder)
+            .ThenBy(product => product.CreatedAt)
+            .ThenBy(product => product.Id)
+            .ToList();
+        var selectedProduct = orderedProducts.FirstOrDefault(product => product.Id == request.Id);
+        if (selectedProduct is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("Product", request.Id));
+        }
+
+        var reorderedProducts = orderedProducts
+            .Where(product => product.Id != request.Id)
+            .Prepend(selectedProduct)
+            .ToList();
+
+        for (var index = 0; index < reorderedProducts.Count; index++)
+        {
+            reorderedProducts[index].SetDisplayOrder(index + 1);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+internal sealed class ReorderProductsCommandHandler(IRepository<ProductEntity> products, IUnitOfWork unitOfWork)
+    : ICommandHandler<ReorderProductsCommand>
+{
+    public async Task<Result> Handle(ReorderProductsCommand request, CancellationToken cancellationToken)
+    {
+        var activeProducts = products.Query()
+            .Where(product => product.IsActive)
+            .ToList();
+        var requestedIds = request.ProductIds?.ToList() ?? [];
+        var existingIds = activeProducts.Select(product => product.Id).ToHashSet();
+
+        if (requestedIds.Count != activeProducts.Count || requestedIds.Distinct().Count() != requestedIds.Count || !requestedIds.All(existingIds.Contains))
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Product.InvalidOrder",
+                "The product order must contain every active product exactly once."));
+        }
+
+        var productById = activeProducts.ToDictionary(product => product.Id);
+        for (var index = 0; index < requestedIds.Count; index++)
+        {
+            productById[requestedIds[index]].SetDisplayOrder(index + 1);
+        }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
@@ -264,7 +330,12 @@ internal sealed class GetProductsQueryHandler(
             query = query.Where(product => product.CollectionId == request.CollectionId);
         }
 
-        return Task.FromResult(Result.Success(query.Select(CatalogMappings.ToResponse).ToList()));
+        return Task.FromResult(Result.Success(query
+            .OrderBy(product => product.DisplayOrder)
+            .ThenBy(product => product.CreatedAt)
+            .ThenBy(product => product.Id)
+            .Select(CatalogMappings.ToResponse)
+            .ToList()));
     }
 }
 
@@ -663,7 +734,8 @@ internal static class CatalogMappings
             product.Description,
             product.BasePrice.Amount,
             product.BasePrice.Currency,
-            product.IsActive);
+            product.IsActive,
+            product.DisplayOrder);
     }
 
     public static ProductVariantResponse ToResponse(ProductVariantEntity variant)

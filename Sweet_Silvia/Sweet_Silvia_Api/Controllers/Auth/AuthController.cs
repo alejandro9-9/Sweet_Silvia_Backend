@@ -76,6 +76,11 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
     {
+        if (!IsTrustedOrigin())
+        {
+            return Forbid();
+        }
+
         if (!Request.Cookies.TryGetValue(RefreshTokenCookieName, out var refreshToken) ||
             string.IsNullOrWhiteSpace(refreshToken))
         {
@@ -138,6 +143,20 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
     private string? GetIpAddress()
     {
         return HttpContext.Connection.RemoteIpAddress?.ToString();
+    }
+
+    private bool IsTrustedOrigin()
+    {
+        var origin = Request.Headers.Origin.ToString();
+        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        if (environment.IsDevelopment())
+        {
+            return string.IsNullOrWhiteSpace(origin) ||
+                   allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase) ||
+                   Uri.TryCreate(origin, UriKind.Absolute, out var developmentOrigin) && developmentOrigin.IsLoopback;
+        }
+
+        return allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase);
     }
 }
 

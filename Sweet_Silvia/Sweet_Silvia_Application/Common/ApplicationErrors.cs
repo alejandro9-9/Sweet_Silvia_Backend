@@ -13,6 +13,9 @@ internal static class ApplicationErrors
     public static Error Conflict(string code, string message) =>
         new(code, message) { StatusCode = 409 };
 
+    public static Error Validation(string code, string message) =>
+        new(code, message) { StatusCode = 400 };
+
     public static Error Unauthorized =>
         new("Auth.Unauthorized", "Invalid credentials.") { StatusCode = 401 };
 }

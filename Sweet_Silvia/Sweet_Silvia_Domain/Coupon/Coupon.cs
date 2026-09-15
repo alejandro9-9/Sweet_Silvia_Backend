@@ -74,9 +74,9 @@ public sealed class Coupon : Entity
             throw new ArgumentException("Minimum purchase amount cannot be negative.", nameof(minimumPurchaseAmount));
         }
 
-        if (minimumItemsQuantity < 0)
+        if (minimumItemsQuantity <= 0)
         {
-            throw new ArgumentException("Minimum items quantity cannot be negative.", nameof(minimumItemsQuantity));
+            throw new ArgumentException("Minimum items quantity should be greater than zero.", nameof(minimumItemsQuantity));
         }
 
         if (maximumDiscountedItemsQuantity <= 0)
@@ -99,15 +99,25 @@ public sealed class Coupon : Entity
             throw new ArgumentException("Order coupons should not define maximum discounted items quantity.", nameof(maximumDiscountedItemsQuantity));
         }
 
+        if (Scope == CouponScope.Order && applicationStrategy.HasValue)
+        {
+            throw new ArgumentException("Order coupons should not define an application strategy.", nameof(applicationStrategy));
+        }
+
         if (Scope == CouponScope.Item && maximumDiscountedItemsQuantity.HasValue && applicationStrategy is null)
         {
             throw new ArgumentException("Item coupons with limited quantity should define an application strategy.", nameof(applicationStrategy));
         }
 
+        if (Scope == CouponScope.Item && !maximumDiscountedItemsQuantity.HasValue && applicationStrategy.HasValue)
+        {
+            throw new ArgumentException("An application strategy requires a maximum discounted items quantity.", nameof(applicationStrategy));
+        }
+
         MinimumPurchaseAmount = minimumPurchaseAmount;
         MinimumItemsQuantity = minimumItemsQuantity;
         MaximumDiscountedItemsQuantity = maximumDiscountedItemsQuantity;
-        ApplicationStrategy = applicationStrategy;
+        ApplicationStrategy = Scope == CouponScope.Item ? applicationStrategy : null;
         MaximumTotalUses = maximumTotalUses;
         MaximumUsesPerUser = maximumUsesPerUser;
         AddDomainEvent(new CouponUpdatedEvent(Id));

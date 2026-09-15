@@ -20,6 +20,7 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<ProductEnt
         builder.Property(entity => entity.Description).HasMaxLength(1000);
         builder.Property(entity => entity.BasePrice).HasConversion(new MoneyConverter()).IsRequired().HasMaxLength(40);
         builder.Property(entity => entity.IsActive).IsRequired();
+        builder.Property(entity => entity.DisplayOrder).IsRequired();
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Property(entity => entity.UpdatedAt);
         builder.HasIndex(entity => entity.CategoryId);

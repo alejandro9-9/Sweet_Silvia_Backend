@@ -49,6 +49,8 @@ public static class DependencyInjection
         ValidateRefreshToken(refreshTokenOptions);
         ValidateEmail(emailVerificationOptions, emailDeliveryOptions);
         ValidateGoogleAuth(googleAuthOptions);
+        ValidateIzipay(izipayOptions);
+        ValidateFileStorage(fileStorageOptions);
 
         static void ConfigureDbContext(DbContextOptionsBuilder options, string databaseConnectionString)
         {
@@ -249,4 +251,71 @@ public static class DependencyInjection
             throw new InvalidOperationException("Brevo email configuration is invalid. The API key must start with 'xkeysib-' and From must contain a valid verified sender.");
         }
     }
+
+    private static void ValidateIzipay(IzipayOptions options)
+    {
+        if (!options.Enabled)
+        {
+            return;
+        }
+
+        var apiKey = string.IsNullOrWhiteSpace(options.ApiKey) ? options.PublicKey : options.ApiKey;
+        if (!HasProductionValue(options.MerchantCode) ||
+            !HasProductionValue(apiKey) ||
+            !HasProductionValue(options.HashKey) ||
+            !IsHttpsUrl(options.BaseUrl) ||
+            !IsPublicHttpsUrl(options.NotificationUrl) ||
+            !IsPublicHttpsUrl(options.TermsAndConditionsUrl))
+        {
+            throw new InvalidOperationException(
+                "Izipay configuration is invalid. Configure the merchant code, payment API key, hash key and public HTTPS URLs before enabling it.");
+        }
+
+        if (!string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(options.Environment, "Production", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Izipay:Environment must be 'Sandbox' or 'Production'.");
+        }
+    }
+
+    private static void ValidateFileStorage(FileStorageOptions options)
+    {
+        if (!string.Equals(options.Provider, "S3", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var publicBucket = string.IsNullOrWhiteSpace(options.S3PublicBucketName)
+            ? options.S3BucketName
+            : options.S3PublicBucketName;
+        var privateBucket = string.IsNullOrWhiteSpace(options.S3PrivateBucketName)
+            ? options.S3BucketName
+            : options.S3PrivateBucketName;
+
+        if (!HasProductionValue(publicBucket) ||
+            !HasProductionValue(privateBucket) ||
+            string.Equals(publicBucket, privateBucket, StringComparison.OrdinalIgnoreCase) ||
+            !HasProductionValue(options.S3Region) ||
+            !HasProductionValue(options.S3PublicBaseUrl) ||
+            !IsHttpsUrl(options.S3PublicBaseUrl))
+        {
+            throw new InvalidOperationException(
+                "S3 storage requires distinct public and private buckets, a region and a public HTTPS base URL.");
+        }
+    }
+
+    private static bool HasProductionValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           !value.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) &&
+           !value.Contains("your-", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsHttpsUrl(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+
+    private static bool IsPublicHttpsUrl(string? value)
+        => IsHttpsUrl(value) &&
+           Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+           !uri.IsLoopback &&
+           !uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) &&
+           !uri.Host.Contains("your-", StringComparison.OrdinalIgnoreCase);
 }

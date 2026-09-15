@@ -3,12 +3,14 @@ using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Filters;
 using Sweet_Silvia_Application;
 using Sweet_Silvia_Infrastructure;
+using Sweet_Silvia_Infrastructure.Abstractions.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +36,17 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.AddCors(options => options.AddPolicy("defaultCorsPolicy", policy =>
 {
+    if (builder.Environment.IsDevelopment())
+    {
+        policy.SetIsOriginAllowed(origin =>
+            allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase) ||
+            Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+        return;
+    }
+
     if (allowedOrigins.Length > 0)
     {
         policy.WithOrigins(allowedOrigins)
@@ -43,14 +56,7 @@ builder.Services.AddCors(options => options.AddPolicy("defaultCorsPolicy", polic
         return;
     }
 
-    if (!builder.Environment.IsDevelopment())
-    {
-        throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
-    }
-
-    policy.AllowAnyOrigin()
-        .AllowAnyHeader()
-        .AllowAnyMethod();
+    throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 }));
 
 builder.Services.AddScoped<GlobalActionLoggingFilter>();
@@ -98,9 +104,33 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
             AutoReplenishment = true
         }));
+    options.AddPolicy("api", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 120,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
 });
 
 var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+    if (!app.Environment.IsDevelopment())
+    {
+        context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    }
+
+    await next();
+});
 
 if (app.Environment.IsDevelopment())
 {
@@ -117,9 +147,20 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 app.UseStaticFiles();
+var fileStorageOptions = app.Services.GetRequiredService<FileStorageOptions>();
+if (string.Equals(fileStorageOptions.Provider, "Local", StringComparison.OrdinalIgnoreCase))
+{
+    var publicUploadRoot = Path.GetFullPath(fileStorageOptions.LocalRootPath);
+    Directory.CreateDirectory(publicUploadRoot);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(publicUploadRoot),
+        RequestPath = "/uploads"
+    });
+}
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers();
+app.MapControllers().RequireRateLimiting("api");
 app.MapGet("/health", async (ApplicationDbContext database, CancellationToken cancellationToken) =>
 {
     try

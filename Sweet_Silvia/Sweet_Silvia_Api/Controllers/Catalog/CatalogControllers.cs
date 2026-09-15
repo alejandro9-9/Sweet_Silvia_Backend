@@ -97,6 +97,16 @@ public sealed class ProductsController(ISender sender) : ControllerBase
         => this.ToActionResult(await sender.Send(new UpdateProductCommand(id, request.CategoryId, request.CollectionId, request.Name, request.Description, request.BasePrice, request.Currency), cancellationToken));
 
     [Authorize(Roles = ApiRoles.Administrator)]
+    [HttpPut("order")]
+    public async Task<IActionResult> Reorder(ReorderProductsRequest request, CancellationToken cancellationToken)
+        => this.ToActionResult(await sender.Send(new ReorderProductsCommand(request.ProductIds), cancellationToken));
+
+    [Authorize(Roles = ApiRoles.Administrator)]
+    [HttpPost("{id:guid}/move-to-top")]
+    public async Task<IActionResult> MoveToTop(Guid id, CancellationToken cancellationToken)
+        => this.ToActionResult(await sender.Send(new MoveProductToTopCommand(id), cancellationToken));
+
+    [Authorize(Roles = ApiRoles.Administrator)]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new DeleteProductCommand(id), cancellationToken));
@@ -168,6 +178,8 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             return BadRequest(new { error = validationError });
         }
 
+        var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+
         var product = await sender.Send(new GetProductByIdQuery(request.ProductId), cancellationToken);
         if (product.IsFailure)
         {
@@ -203,7 +215,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             new FileStorageUpload(
                 "products",
                 request.File.FileName,
-                request.File.ContentType,
+                GetContentType(extension),
                 fileStream),
             cancellationToken);
 
@@ -221,7 +233,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
 
             if (result.IsFailure)
             {
-                await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+                await fileStorage.DeleteAsync(storedFile.Url, cancellationToken);
                 return BadRequest(result.Error);
             }
 
@@ -229,7 +241,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
         }
         catch
         {
-            await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
+            await fileStorage.DeleteAsync(storedFile.Url, cancellationToken);
             throw;
         }
     }
@@ -296,6 +308,14 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
 
         return validSignature ? null : "The file content does not match its extension.";
     }
+
+    private static string GetContentType(string extension) => extension switch
+    {
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        _ => "application/octet-stream"
+    };
 }
 
 public sealed record CreateCategoryRequest(string Name, string Description);
@@ -304,6 +324,7 @@ public sealed record CreateCollectionRequest(string Name, string Description);
 public sealed record UpdateCollectionRequest(string Name, string Description);
 public sealed record CreateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
 public sealed record UpdateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
+public sealed record ReorderProductsRequest(IReadOnlyList<Guid> ProductIds);
 public sealed record CreateProductVariantRequest(Guid ProductId, string Size, string Color, string Sku, int PhysicalStock, decimal? Price = null, string Currency = "PEN", decimal ShippingWeightKg = 0.3m, decimal ShippingLengthCm = 30m, decimal ShippingWidthCm = 22m, decimal ShippingHeightCm = 4m);
 public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN", decimal? ShippingWeightKg = null, decimal? ShippingLengthCm = null, decimal? ShippingWidthCm = null, decimal? ShippingHeightCm = null);
 public sealed record CreateProductImageRequest(Guid ProductId, Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);

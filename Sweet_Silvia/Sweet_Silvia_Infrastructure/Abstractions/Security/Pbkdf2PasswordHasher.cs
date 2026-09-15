@@ -7,7 +7,7 @@ namespace Sweet_Silvia_Infrastructure.Abstractions.Security;
 public sealed class Pbkdf2PasswordHasher : IPasswordHasher
 {
     private const string Algorithm = "PBKDF2-SHA256";
-    private const int Iterations = 210_000;
+    private const int Iterations = 600_000;
     private const int SaltSize = 16;
     private const int HashSize = 32;
 

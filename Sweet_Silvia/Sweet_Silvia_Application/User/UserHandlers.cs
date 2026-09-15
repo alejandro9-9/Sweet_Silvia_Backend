@@ -25,6 +25,13 @@ internal sealed class CreateUserCommandHandler(
 {
     public async Task<Result<Guid>> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
+        if (request.Password.Length is < 8 or > 128)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Validation(
+                "User.PasswordInvalid",
+                "Password must contain between 8 and 128 characters."));
+        }
+
         var role = await roles.GetByIdAsync(request.RoleId, cancellationToken);
         if (role is null || !role.IsActive)
         {

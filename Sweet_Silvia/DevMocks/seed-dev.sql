@@ -204,18 +204,19 @@ ON CONFLICT ("Id") DO UPDATE SET
 "Description" = EXCLUDED."Description",
 "IsActive" = EXCLUDED."IsActive";
 
-INSERT INTO "Products" ("Id", "CategoryId", "CollectionId", "Name", "Description", "BasePrice", "IsActive", "CreatedAt", "UpdatedAt") VALUES
-('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000002', 'Polo Oversize Blanco', 'Polo oversize de algodon color blanco.', '89.90|PEN', TRUE, '2026-08-31T20:00:00Z', NULL),
-('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', 'Jean Wide Leg Azul', 'Jean wide leg azul clasico.', '159.90|PEN', TRUE, '2026-08-31T20:00:00Z', NULL),
-('30000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', 'Vestido Floral Rosa', 'Vestido floral liviano para verano.', '139.90|PEN', TRUE, '2026-08-31T20:00:00Z', NULL),
-('30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000004', NULL, 'Gorra Sweet Silvia', 'Gorra bordada con logo Sweet Silvia.', '49.90|PEN', TRUE, '2026-08-31T20:00:00Z', NULL)
+INSERT INTO "Products" ("Id", "CategoryId", "CollectionId", "Name", "Description", "BasePrice", "IsActive", "DisplayOrder", "CreatedAt", "UpdatedAt") VALUES
+('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000002', 'Polo Oversize Blanco', 'Polo oversize de algodon color blanco.', '89.90|PEN', TRUE, 1, '2026-08-31T20:00:00Z', NULL),
+('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', 'Jean Wide Leg Azul', 'Jean wide leg azul clasico.', '159.90|PEN', TRUE, 2, '2026-08-31T20:00:00Z', NULL),
+('30000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', 'Vestido Floral Rosa', 'Vestido floral liviano para verano.', '139.90|PEN', TRUE, 3, '2026-08-31T20:00:00Z', NULL),
+('30000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000004', NULL, 'Gorra Sweet Silvia', 'Gorra bordada con logo Sweet Silvia.', '49.90|PEN', TRUE, 4, '2026-08-31T20:00:00Z', NULL)
 ON CONFLICT ("Id") DO UPDATE SET
 "CategoryId" = EXCLUDED."CategoryId",
 "CollectionId" = EXCLUDED."CollectionId",
 "Name" = EXCLUDED."Name",
 "Description" = EXCLUDED."Description",
 "BasePrice" = EXCLUDED."BasePrice",
-"IsActive" = EXCLUDED."IsActive";
+"IsActive" = EXCLUDED."IsActive",
+"DisplayOrder" = EXCLUDED."DisplayOrder";
 
 INSERT INTO "ProductVariants" ("Id", "ProductId", "Size", "Color", "Sku", "PhysicalStock", "Price", "IsActive", "CreatedAt", "UpdatedAt") VALUES
 ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'S', 'Blanco', 'POLO-BLA-S', 25, NULL, TRUE, '2026-08-31T20:00:00Z', NULL),

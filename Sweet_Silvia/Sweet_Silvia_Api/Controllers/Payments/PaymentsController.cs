@@ -70,9 +70,7 @@ public sealed class PaymentMethodsController(ISender sender, IConfiguration conf
         return bool.TryParse(options["Enabled"], out var enabled) &&
                enabled &&
                HasConfiguredValue(options["MerchantCode"]) &&
-               HasConfiguredValue(options["Username"]) &&
-               HasConfiguredValue(options["Password"]) &&
-               HasConfiguredValue(options["PublicKey"]) &&
+               (HasConfiguredValue(options["ApiKey"]) || HasConfiguredValue(options["PublicKey"])) &&
                HasConfiguredValue(options["HashKey"]) &&
                IsPublicHttpsUrl(notificationUrl) &&
                IsPublicHttpsUrl(termsUrl);
@@ -177,9 +175,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
         return bool.TryParse(options["Enabled"], out var enabled) &&
                enabled &&
                HasConfiguredValue(options["MerchantCode"]) &&
-               HasConfiguredValue(options["Username"]) &&
-               HasConfiguredValue(options["Password"]) &&
-               HasConfiguredValue(options["PublicKey"]) &&
+               (HasConfiguredValue(options["ApiKey"]) || HasConfiguredValue(options["PublicKey"])) &&
                HasConfiguredValue(options["HashKey"]) &&
                IsPublicHttpsUrl(options["NotificationUrl"]) &&
                IsPublicHttpsUrl(options["TermsAndConditionsUrl"]);
@@ -272,6 +268,8 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
             return BadRequest(new { error = validationError });
         }
 
+        var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+
         var payment = await sender.Send(new GetPaymentByIdQuery(request.PaymentId), cancellationToken);
         if (payment.IsFailure)
         {
@@ -294,7 +292,7 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
             new FileStorageUpload(
                 "payment-receipts",
                 request.File.FileName,
-                request.File.ContentType,
+                GetContentType(extension),
                 fileStream,
                 false),
             cancellationToken);
@@ -423,6 +421,15 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
 
         return validSignature ? null : "The file content does not match its extension.";
     }
+
+    private static string GetContentType(string extension) => extension switch
+    {
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".pdf" => "application/pdf",
+        _ => "application/octet-stream"
+    };
 }
 
 [ApiController]

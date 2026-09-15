@@ -74,6 +74,7 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
 
     private async Task<Result<string>> GenerateTokenAsync(string transactionId, CancellationToken cancellationToken)
     {
+        var apiKey = GetApiKey();
         using var request = new HttpRequestMessage(HttpMethod.Post, NormalizePath(options.TokenEndpoint))
         {
             Content = JsonContent.Create(new
@@ -82,7 +83,7 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
                 merchantCode = options.MerchantCode.Trim(),
                 // Izipay expects a unique order reference, not the merchant code.
                 orderNumber = transactionId,
-                publicKey = options.PublicKey.Trim(),
+                publicKey = apiKey.Trim(),
                 amount = "0.00"
             }, options: JsonOptions)
         };
@@ -152,6 +153,7 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
 
     private Result EnsureConfigured()
     {
+        var apiKey = GetApiKey();
         if (!options.Enabled)
         {
             return Result.Failure(new Error("Izipay.Disabled", "Izipay integration is disabled."));
@@ -161,9 +163,9 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
             string.IsNullOrWhiteSpace(options.TokenEndpoint) ||
             string.IsNullOrWhiteSpace(options.PaymentLinkEndpoint) ||
             string.IsNullOrWhiteSpace(options.MerchantCode) ||
-            string.IsNullOrWhiteSpace(options.PublicKey) ||
+            string.IsNullOrWhiteSpace(apiKey) ||
             IsPlaceholder(options.MerchantCode) ||
-            IsPlaceholder(options.PublicKey) ||
+            IsPlaceholder(apiKey) ||
             string.IsNullOrWhiteSpace(options.HashKey) ||
             string.IsNullOrWhiteSpace(options.NotificationUrl) ||
             string.IsNullOrWhiteSpace(options.TermsAndConditionsUrl) ||
@@ -179,6 +181,9 @@ internal sealed class IzipayPaymentGateway(HttpClient httpClient, IzipayOptions 
 
         return Result.Success();
     }
+
+    private string GetApiKey()
+        => string.IsNullOrWhiteSpace(options.ApiKey) ? options.PublicKey : options.ApiKey;
 
     private static async Task<Result<JsonDocument>> ReadDocumentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {

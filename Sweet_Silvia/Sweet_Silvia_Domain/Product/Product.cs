@@ -7,7 +7,7 @@ public sealed class Product : Entity
 {
     private Product() { }
 
-    public Product(Guid id, Guid categoryId, Guid? collectionId, string name, string? description, Money basePrice, bool isActive, DateTimeOffset createdAt)
+    public Product(Guid id, Guid categoryId, Guid? collectionId, string name, string? description, Money basePrice, bool isActive, DateTimeOffset createdAt, int displayOrder)
         : base(id)
     {
         CategoryId = categoryId;
@@ -17,6 +17,7 @@ public sealed class Product : Entity
         BasePrice = basePrice;
         IsActive = isActive;
         CreatedAt = createdAt;
+        DisplayOrder = displayOrder;
     }
 
     public Guid CategoryId { get; private set; }
@@ -27,12 +28,13 @@ public sealed class Product : Entity
     public bool IsActive { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
+    public int DisplayOrder { get; private set; }
 
-    public static Product Create(Guid categoryId, Guid? collectionId, string name, string? description, Money basePrice)
+    public static Product Create(Guid categoryId, Guid? collectionId, string name, string? description, Money basePrice, int displayOrder)
     {
         Validate(categoryId, name, basePrice);
 
-        var result = new Product(Guid.NewGuid(), categoryId, collectionId, name.Trim(), description?.Trim(), basePrice, true, DateTimeOffset.UtcNow);
+        var result = new Product(Guid.NewGuid(), categoryId, collectionId, name.Trim(), description?.Trim(), basePrice, true, DateTimeOffset.UtcNow, displayOrder);
         result.AddDomainEvent(new ProductCreatedEvent(result.Id));
         return result;
     }
@@ -46,6 +48,23 @@ public sealed class Product : Entity
         BasePrice = basePrice;
         CategoryId = categoryId;
         CollectionId = collectionId;
+        UpdatedAt = DateTimeOffset.UtcNow;
+        AddDomainEvent(new ProductUpdatedEvent(Id));
+    }
+
+    public void SetDisplayOrder(int displayOrder)
+    {
+        if (displayOrder < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(displayOrder));
+        }
+
+        if (DisplayOrder == displayOrder)
+        {
+            return;
+        }
+
+        DisplayOrder = displayOrder;
         UpdatedAt = DateTimeOffset.UtcNow;
         AddDomainEvent(new ProductUpdatedEvent(Id));
     }
