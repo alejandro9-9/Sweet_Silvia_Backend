@@ -19,7 +19,7 @@ Build the root `Dockerfile`, push the image to a private ECR repository and crea
 
 - Container port: `8080`.
 - Health check path: `/health`.
-- Minimum and maximum tasks: `1` for the first deployment because migrations currently run during API startup.
+- Minimum and maximum tasks: `1` for the first deployment while `Database__ApplyMigrationsOnStartup=true`.
 - Public HTTPS host: initially the generated application URL, then `api.sweetsilviastore.com`.
 - Network: the same VPC used by RDS.
 
@@ -35,6 +35,10 @@ Use `Sweet_Silvia/.env.stable.example` as the complete checklist. Keep ordinary 
 - `Izipay__ApiKey`
 - `Izipay__HashKey`
 - `Olva__ApiKey` when the live courier integration is enabled
+
+For the first deployment, keep `Google__Enabled=false` and `Izipay__Enabled=false` until the production origins and external credentials have been verified. The frontend build must use `VITE_ENABLE_MOCKS=false`, `VITE_IZIPAY_ENABLED=false`, the public API URL in `VITE_API_URL`, and an empty `VITE_GOOGLE_CLIENT_ID` while Google OAuth is disabled. Enable Google only after the final frontend origin has been added to Google Cloud and the same web Client ID is configured in both services.
+
+The Brevo sender must be a verified address. A syntactically valid placeholder is not sufficient for delivery, so configure `Email__From` together with `Email__ApiKey` before testing registration or email verification in production.
 
 Do not configure `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. Assign an ECS task role with only these object permissions on the two application buckets:
 
@@ -52,7 +56,7 @@ Create PostgreSQL in RDS with automated backups, deletion protection and storage
 
 The production image contains Amazon's global RDS CA bundle at `/app/rds-global-bundle.pem`. Keep `SSL Mode=VerifyFull;Root Certificate=/app/rds-global-bundle.pem` in the RDS connection string so Npgsql validates both encryption and the database hostname.
 
-The API applies Entity Framework migrations on startup. Keep one task during the initial release. Before scaling to multiple tasks, move migrations to a separate deployment step or one-off task.
+For the initial release, set `Database__ApplyMigrationsOnStartup=true` and keep one backend task so only one process updates the schema. Before scaling to multiple tasks, run migrations from a separate deployment step or one-off task and set `Database__ApplyMigrationsOnStartup=false` on the service.
 
 ## Domains and external services
 

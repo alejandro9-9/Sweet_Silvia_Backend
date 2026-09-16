@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using System.Net;
+using System.Data.Common;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
@@ -19,11 +20,22 @@ if (int.TryParse(builder.Configuration["PORT"], out var port))
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 }
 
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var allowedOrigins = (builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [])
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
+if (!builder.Environment.IsDevelopment())
+{
+    ValidateProductionOrigins(allowedOrigins);
+    ValidateProductionDatabase(builder.Configuration.GetConnectionString("SweetSilviaDatabase"));
+}
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
     var configuredProxies = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
     foreach (var proxy in configuredProxies)
     {
@@ -138,7 +150,12 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-await app.ApplyMigrationsAsync();
+var applyMigrationsOnStartup = builder.Configuration.GetValue<bool?>("Database:ApplyMigrationsOnStartup")
+    ?? builder.Environment.IsDevelopment();
+if (applyMigrationsOnStartup)
+{
+    await app.ApplyMigrationsAsync();
+}
 app.UseForwardedHeaders();
 app.UseRateLimiter();
 app.UseCors("defaultCorsPolicy");
@@ -175,5 +192,58 @@ app.MapGet("/health", async (ApplicationDbContext database, CancellationToken ca
     }
 });
 app.Run();
+
+static void ValidateProductionOrigins(IEnumerable<string> origins)
+{
+    var configuredOrigins = origins.ToArray();
+    if (configuredOrigins.Length == 0)
+    {
+        throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
+    }
+
+    foreach (var origin in configuredOrigins)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            uri.IsLoopback ||
+            uri.AbsolutePath != "/" ||
+            !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment) ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            origin.Contains("your-", StringComparison.OrdinalIgnoreCase) ||
+            origin.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Cors origin '{origin}' is invalid. Production origins must be public HTTPS origins without paths.");
+        }
+    }
+}
+
+static void ValidateProductionDatabase(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        throw new InvalidOperationException("The production database connection string is missing.");
+    }
+
+    var connection = new DbConnectionStringBuilder { ConnectionString = connectionString };
+    var host = GetConnectionValue(connection, "Host");
+    var sslMode = GetConnectionValue(connection, "SSL Mode");
+    var rootCertificate = GetConnectionValue(connection, "Root Certificate");
+
+    if (string.IsNullOrWhiteSpace(host) ||
+        host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+        host.Contains("YOUR_", StringComparison.OrdinalIgnoreCase) ||
+        !string.Equals(sslMode, "VerifyFull", StringComparison.OrdinalIgnoreCase) ||
+        string.IsNullOrWhiteSpace(rootCertificate) ||
+        rootCertificate.Contains("YOUR_", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "The production database must use a non-local host, SSL Mode=VerifyFull and a root certificate.");
+    }
+}
+
+static string? GetConnectionValue(DbConnectionStringBuilder connection, string key)
+    => connection.TryGetValue(key, out var value) ? Convert.ToString(value) : null;
 
 public partial class Program;
