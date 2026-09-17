@@ -274,7 +274,8 @@ INSERT INTO "ShippingRates" ("Id", "CourierId", "CourierType", "Country", "Depar
 ('80000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 'OwnDelivery', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb001', 'cccccccc-cccc-cccc-cccc-ccccccccc001', 'dddddddd-dddd-dddd-dddd-ddddddddd001', 'Lima', 'SameDay', '12.00|PEN', '300.00|PEN', 'Mismo dia', TRUE, '2026-08-31T20:00:00Z', NULL),
 ('80000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', 'DeliveryApp', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb001', 'cccccccc-cccc-cccc-cccc-ccccccccc001', NULL, 'Lima', 'Express', '18.00|PEN', '300.00|PEN', '24 horas', TRUE, '2026-08-31T20:00:00Z', NULL),
 ('80000000-0000-0000-0000-000000000003', '70000000-0000-0000-0000-000000000003', 'Agency', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb002', 'cccccccc-cccc-cccc-cccc-ccccccccc002', NULL, 'Province', 'Agency', '25.00|PEN', '350.00|PEN', '2 a 4 dias', TRUE, '2026-08-31T20:00:00Z', NULL),
-('80000000-0000-0000-0000-000000000004', '70000000-0000-0000-0000-000000000004', 'Agency', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb003', 'cccccccc-cccc-cccc-cccc-ccccccccc003', NULL, 'Province', 'Agency', '22.00|PEN', '350.00|PEN', '2 a 5 dias', TRUE, '2026-08-31T20:00:00Z', NULL)
+('80000000-0000-0000-0000-000000000004', '70000000-0000-0000-0000-000000000004', 'Agency', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb003', 'cccccccc-cccc-cccc-cccc-ccccccccc003', NULL, 'Province', 'Agency', '22.00|PEN', '350.00|PEN', '2 a 5 dias', TRUE, '2026-08-31T20:00:00Z', NULL),
+('80000000-0000-0000-0000-000000000005', '70000000-0000-0000-0000-000000000003', 'Agency', 'PE', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb013', 'cccccccc-cccc-cccc-cccc-ccccccccc022', NULL, 'Province', 'Agency', '25.00|PEN', '350.00|PEN', '2 a 4 dias', TRUE, '2026-08-31T20:00:00Z', NULL)
 ON CONFLICT ("Id") DO UPDATE SET
 "CourierId" = EXCLUDED."CourierId",
 "CourierType" = EXCLUDED."CourierType",

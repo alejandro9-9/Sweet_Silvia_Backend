@@ -5,7 +5,7 @@ namespace Sweet_Silvia_Application.Shipment;
 
 public sealed record ShipmentResponse(Guid Id, Guid OrderId, Guid CourierId, ShipmentStatus Status, string? TrackingCode, string? ExternalShipmentCode, decimal ShippingCost, string Currency, DateTimeOffset CreatedAt, DateTimeOffset? RegisteredExternallyAt, DateTimeOffset? EstimatedDeliveryAt, DateTimeOffset? DeliveredAt, string? Observation);
 
-public sealed record CreateShipmentCommand(Guid OrderId, Guid CourierId, decimal ShippingCost, string Currency = "PEN") : ICommand<Guid>;
+public sealed record CreateShipmentCommand(Guid OrderId, Guid CourierId, decimal ShippingCost, string Currency = "PEN", string? Observation = null) : ICommand<Guid>;
 
 public sealed record RegisterExternalShipmentCommand(Guid ShipmentId, string TrackingCode, string? ExternalShipmentCode, DateTimeOffset? EstimatedDeliveryAt) : ICommand;
 

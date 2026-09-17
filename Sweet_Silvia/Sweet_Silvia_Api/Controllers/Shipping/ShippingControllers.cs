@@ -133,7 +133,7 @@ public sealed class ShipmentsController(ISender sender) : ControllerBase
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost]
     public async Task<IActionResult> Create(CreateShipmentRequest request, CancellationToken cancellationToken)
-        => this.ToCreatedResult(await sender.Send(new CreateShipmentCommand(request.OrderId, request.CourierId, request.ShippingCost, request.Currency), cancellationToken));
+        => this.ToCreatedResult(await sender.Send(new CreateShipmentCommand(request.OrderId, request.CourierId, request.ShippingCost, request.Currency, request.Observation), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPatch("{id:guid}/register-external")]
@@ -212,7 +212,7 @@ public sealed record CalculateShippingCostRequest(
     IReadOnlyList<CalculateShippingPackageItemRequest>? PackageItems = null);
 public sealed record CreateShippingRateRequest(Guid CourierId, CourierType CourierType, Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, ShippingServiceType ServiceType, decimal Cost, string Currency = "PEN", decimal? FreeShippingMinimumAmount = null, string? EstimatedTime = null);
 public sealed record UpdateShippingRateRequest(Guid CourierId, CourierType CourierType, Guid DepartmentId, Guid? ProvinceId, Guid? DistrictId, ShippingDestinationType DestinationType, ShippingServiceType ServiceType, decimal Cost, string Currency = "PEN", decimal? FreeShippingMinimumAmount = null, string? EstimatedTime = null);
-public sealed record CreateShipmentRequest(Guid OrderId, Guid CourierId, decimal ShippingCost, string Currency = "PEN");
+public sealed record CreateShipmentRequest(Guid OrderId, Guid CourierId, decimal ShippingCost, string Currency = "PEN", string? Observation = null);
 public sealed record RegisterExternalShipmentRequest(string TrackingCode, string? ExternalShipmentCode, DateTimeOffset? EstimatedDeliveryAt);
 public sealed record ChangeShipmentStatusRequest(ShipmentStatus Status, string? Observation);
 public sealed record CreateShipmentEventRequest(Guid ShipmentId, ShipmentStatus Status, string Description, string? Location, DateTimeOffset EventDate);

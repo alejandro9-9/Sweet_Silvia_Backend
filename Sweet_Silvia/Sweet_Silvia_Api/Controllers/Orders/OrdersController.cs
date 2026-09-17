@@ -42,18 +42,29 @@ public sealed class OrdersController(ISender sender) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(CreateOrderRequest request, CancellationToken cancellationToken)
     {
-        var address = await sender.Send(new GetAddressByIdQuery(request.AddressId), cancellationToken);
-        if (address.IsFailure)
+        if (request.AddressId.HasValue)
         {
-            return this.ToActionResult(address);
+            var address = await sender.Send(new GetAddressByIdQuery(request.AddressId.Value), cancellationToken);
+            if (address.IsFailure)
+            {
+                return this.ToActionResult(address);
+            }
+
+            if (address.Value.UserId != User.GetUserId())
+            {
+                return Forbid();
+            }
         }
 
-        if (address.Value.UserId != User.GetUserId())
-        {
-            return Forbid();
-        }
-
-        return this.ToCreatedResult(await sender.Send(new CreateOrderCommand(User.GetUserId(), request.AddressId, request.ShippingRateId, request.ShippingAgencyId, request.CouponId), cancellationToken));
+        return this.ToCreatedResult(await sender.Send(new CreateOrderCommand(
+            User.GetUserId(),
+            request.AddressId,
+            request.ShippingRateId,
+            request.ShippingAgencyId,
+            request.ShippingDepartmentId,
+            request.ShippingProvinceId,
+            request.ShippingDistrictId,
+            request.CouponId), cancellationToken));
     }
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
@@ -100,5 +111,5 @@ public sealed class OrderStatusHistoryController(ISender sender) : ControllerBas
         => this.ToActionResult(await sender.Send(new GetOrderStatusHistoryQuery(orderId), cancellationToken));
 }
 
-public sealed record CreateOrderRequest(Guid AddressId, Guid ShippingRateId, Guid? ShippingAgencyId = null, Guid? CouponId = null);
+public sealed record CreateOrderRequest(Guid? AddressId, Guid ShippingRateId, Guid? ShippingAgencyId = null, Guid? ShippingDepartmentId = null, Guid? ShippingProvinceId = null, Guid? ShippingDistrictId = null, Guid? CouponId = null);
 public sealed record ChangeOrderStatusRequest(OrderStatus Status, string? Observation);

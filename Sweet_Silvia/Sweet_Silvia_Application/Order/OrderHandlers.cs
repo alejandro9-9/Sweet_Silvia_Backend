@@ -63,23 +63,42 @@ internal sealed class CreateOrderCommandHandler(
     {
         const string storeCurrency = "PEN";
 
-        var address = await addresses.GetByIdAsync(request.AddressId, cancellationToken);
-        if (address is null || !address.IsActive || address.UserId != request.UserId)
-        {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", request.AddressId));
-        }
-
-        var department = departments.Query()
-            .FirstOrDefault(item => item.Id == address.DepartmentId && item.IsActive);
-        if (department is null)
-        {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", address.DepartmentId));
-        }
-
         var shippingRate = await shippingRates.GetByIdAsync(request.ShippingRateId, cancellationToken);
         if (shippingRate is null || !shippingRate.IsActive)
         {
             return Result.Failure<Guid>(ApplicationErrors.NotFound("ShippingRate", request.ShippingRateId));
+        }
+
+        var address = request.AddressId.HasValue
+            ? await addresses.GetByIdAsync(request.AddressId.Value, cancellationToken)
+            : null;
+        if (request.AddressId.HasValue && (address is null || !address.IsActive || address.UserId != request.UserId))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", request.AddressId.Value));
+        }
+
+        if (!request.AddressId.HasValue && shippingRate.DestinationType != ShippingDestinationType.Province)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.AddressRequired",
+                "A delivery address is required for this shipping service."));
+        }
+
+        var departmentId = address?.DepartmentId ?? request.ShippingDepartmentId;
+        var provinceId = address?.ProvinceId ?? request.ShippingProvinceId;
+        var districtId = address?.DistrictId ?? request.ShippingDistrictId;
+        if (!departmentId.HasValue || !provinceId.HasValue || !districtId.HasValue)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.LocationRequired",
+                "Department, province and district are required to create the order."));
+        }
+
+        var department = departments.Query()
+            .FirstOrDefault(item => item.Id == departmentId.Value && item.IsActive);
+        if (department is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", departmentId.Value));
         }
 
         var courier = await couriers.GetByIdAsync(shippingRate.CourierId, cancellationToken);
@@ -99,7 +118,7 @@ internal sealed class CreateOrderCommandHandler(
         }
 
         if (shippingRate.DestinationType != department.DestinationType ||
-            !shippingRate.AppliesTo(address.DepartmentId, address.ProvinceId, address.DistrictId, department.DestinationType))
+            !shippingRate.AppliesTo(departmentId.Value, provinceId.Value, districtId.Value, department.DestinationType))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Shipping.InvalidRate",
@@ -107,9 +126,9 @@ internal sealed class CreateOrderCommandHandler(
         }
 
         var province = provinces.Query()
-            .FirstOrDefault(item => item.Id == address.ProvinceId && item.IsActive);
+            .FirstOrDefault(item => item.Id == provinceId.Value && item.IsActive);
         var district = districts.Query()
-            .FirstOrDefault(item => item.Id == address.DistrictId && item.IsActive);
+            .FirstOrDefault(item => item.Id == districtId.Value && item.IsActive);
 
         if (province is null || district is null)
         {
@@ -128,9 +147,7 @@ internal sealed class CreateOrderCommandHandler(
             var shippingAgency = await olvaAgencies.GetByIdAsync(request.ShippingAgencyId.Value, cancellationToken);
             if (shippingAgency is null || !shippingAgency.IsActive ||
                 !string.Equals(shippingAgency.Department, department.Name, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(shippingAgency.Province, province.Name, StringComparison.OrdinalIgnoreCase) ||
-                (!string.IsNullOrWhiteSpace(shippingAgency.District) &&
-                 !string.Equals(shippingAgency.District, district.Name, StringComparison.OrdinalIgnoreCase)))
+                !string.Equals(shippingAgency.Province, province.Name, StringComparison.OrdinalIgnoreCase))
             {
                 return Result.Failure<Guid>(ApplicationErrors.Conflict(
                     "Shipping.InvalidAgency",

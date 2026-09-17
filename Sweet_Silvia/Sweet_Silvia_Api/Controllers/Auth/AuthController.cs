@@ -26,7 +26,7 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
 
         if (result.IsFailure)
         {
-            return Unauthorized(result.Error);
+            return StatusCode(result.Error.StatusCode ?? StatusCodes.Status401Unauthorized, result.Error);
         }
 
         SetRefreshTokenCookie(result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt);

@@ -236,9 +236,19 @@ internal sealed class LoginCommandHandler(
         var email = EmailAddress.Create(request.Email);
         var user = users.Query().FirstOrDefault(user => user.Email == email);
 
-        if (user is null || !user.IsActive || user.PasswordHash is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
+        if (user is null || user.PasswordHash is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
         {
-            return Result.Failure<LoginResponse>(ApplicationErrors.Unauthorized);
+            return Result.Failure<LoginResponse>(ApplicationErrors.InvalidCredentials);
+        }
+
+        if (user.Status == UserStatus.Blocked)
+        {
+            return Result.Failure<LoginResponse>(ApplicationErrors.UserBlocked);
+        }
+
+        if (user.Status != UserStatus.Active)
+        {
+            return Result.Failure<LoginResponse>(ApplicationErrors.UserInactive);
         }
 
         var role = roles.Query().FirstOrDefault(role => role.Id == user.RoleId);

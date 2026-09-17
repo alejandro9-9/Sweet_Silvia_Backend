@@ -403,22 +403,22 @@ internal static class IzipayValidation
 
     public static string? ValidateContact(IzipayPaymentLinkContact contact)
     {
-        if (contact is null || contact.FirstName.Trim().Length is < 2 or > 50 || contact.LastName.Trim().Length is < 2 or > 50)
+        if (contact is null || contact.FirstName.Trim().Length is < 2 or > 100 || contact.LastName.Trim().Length is < 2 or > 100)
         {
             return "El nombre y apellido para Izipay deben tener entre 2 y 50 caracteres.";
         }
 
-        if (contact.Email.Trim().Length is < 5 or > 50 || !contact.Email.Contains('@', StringComparison.Ordinal))
+        if (contact.Email.Trim().Length is < 5 or > 254 || !contact.Email.Contains('@', StringComparison.Ordinal))
         {
             return "El correo para Izipay no es valido.";
         }
 
-        if (contact.PhoneNumber.Trim().Length is < 7 or > 15 || contact.Street.Trim().Length is < 5 or > 25)
+        if (contact.PhoneNumber.Trim().Length is < 7 or > 20 || contact.Street.Trim().Length is < 5 or > 200)
         {
             return "El telefono debe tener entre 7 y 15 caracteres y la direccion entre 5 y 25.";
         }
 
-        if (contact.PostalCode.Trim().Length is < 5 or > 10 || contact.City.Trim().Length is < 3 or > 40 || contact.State.Trim().Length is < 3 or > 40)
+        if (contact.PostalCode.Trim().Length is < 3 or > 20 || contact.City.Trim().Length is < 3 or > 100 || contact.State.Trim().Length is < 3 or > 100)
         {
             return "Completa un codigo postal, ciudad y departamento validos para Izipay.";
         }

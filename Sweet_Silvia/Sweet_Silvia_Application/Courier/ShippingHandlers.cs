@@ -23,6 +23,7 @@ using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderSta
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
 using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
+using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
 
 namespace Sweet_Silvia_Application.Courier;
 
@@ -377,6 +378,7 @@ internal sealed class CreateShipmentCommandHandler(
     IRepository<CourierEntity> couriers,
     IRepository<DepartmentEntity> departments,
     IRepository<Sweet_Silvia_Domain.Address.Address> addresses,
+    IRepository<OlvaAgencyEntity> olvaAgencies,
     IUnitOfWork unitOfWork)
     : ICommandHandler<CreateShipmentCommand, Guid>
 {
@@ -401,16 +403,35 @@ internal sealed class CreateShipmentCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Courier", request.CourierId));
         }
 
-        var address = await addresses.GetByIdAsync(order.AddressId, cancellationToken);
-        if (address is null)
+        DepartmentEntity? department;
+        if (order.AddressId.HasValue)
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", order.AddressId));
+            var address = await addresses.GetByIdAsync(order.AddressId.Value, cancellationToken);
+            if (address is null)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", order.AddressId.Value));
+            }
+
+            department = await departments.GetByIdAsync(address.DepartmentId, cancellationToken);
+        }
+        else
+        {
+            if (!order.ShippingAgencyId.HasValue)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Shipment.AgencyRequired",
+                    "A province order without a delivery address must have a pickup agency."));
+            }
+
+            var agency = await olvaAgencies.GetByIdAsync(order.ShippingAgencyId.Value, cancellationToken);
+            department = agency is null || !agency.IsActive || string.IsNullOrWhiteSpace(agency.Department)
+                ? null
+                : departments.Query().FirstOrDefault(item => item.IsActive && item.Name.ToLower() == agency.Department.Trim().ToLower());
         }
 
-        var department = await departments.GetByIdAsync(address.DepartmentId, cancellationToken);
         if (department is null || !department.IsActive)
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", address.DepartmentId));
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department"));
         }
 
         if (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency)
@@ -435,7 +456,7 @@ internal sealed class CreateShipmentCommandHandler(
                 "Shipment cost must match the shipping cost stored in the order."));
         }
 
-        var shipment = ShipmentEntity.Create(request.OrderId, request.CourierId, Money.Create(request.ShippingCost, request.Currency));
+        var shipment = ShipmentEntity.Create(request.OrderId, request.CourierId, Money.Create(request.ShippingCost, request.Currency), request.Observation);
         shipments.Add(shipment);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return shipment.Id;

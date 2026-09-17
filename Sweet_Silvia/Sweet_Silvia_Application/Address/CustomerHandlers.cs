@@ -82,6 +82,11 @@ internal sealed class CreateAddressCommandHandler(
             return Result.Failure(ApplicationErrors.Conflict("Address.InvalidProvince", "Province does not belong to the selected department or is inactive."));
         }
 
+        if (!IsDeliveryZone(department.Name, province.Name))
+        {
+            return Result.Failure(ApplicationErrors.Conflict("Address.DeliveryZoneUnavailable", "Delivery is only available in Lima/Lima and Callao/Callao."));
+        }
+
         var district = districts.Query().FirstOrDefault(district =>
             district.Id == districtId &&
             district.ProvinceId == provinceId &&
@@ -92,6 +97,15 @@ internal sealed class CreateAddressCommandHandler(
         }
 
         return Result.Success();
+    }
+
+    private static bool IsDeliveryZone(string departmentName, string provinceName)
+    {
+        var normalizedDepartment = departmentName.Trim().ToLowerInvariant();
+        var normalizedProvince = provinceName.Trim().ToLowerInvariant();
+
+        return (normalizedDepartment == "lima" && normalizedProvince == "lima") ||
+               (normalizedDepartment == "callao" && normalizedProvince == "callao");
     }
 
     internal static void UnsetOtherDefaultAddresses(Guid userId, IRepository<AddressEntity> addresses)
@@ -260,6 +274,13 @@ internal sealed class AddCartItemCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("ProductVariant", request.ProductVariantId));
         }
 
+        if (request.Quantity > variant.PhysicalStock)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Cart.StockNotEnough",
+                $"Only {variant.PhysicalStock} unit(s) of this product are available."));
+        }
+
         var item = cartItems.Query().FirstOrDefault(item => item.CartId == request.CartId && item.ProductVariantId == request.ProductVariantId);
         if (item is null)
         {
@@ -267,6 +288,13 @@ internal sealed class AddCartItemCommandHandler(
         }
         else
         {
+            if (item.Quantity + request.Quantity > variant.PhysicalStock)
+            {
+                return Result.Failure(ApplicationErrors.Conflict(
+                    "Cart.StockNotEnough",
+                    $"Only {variant.PhysicalStock} unit(s) of this product are available."));
+            }
+
             if (item.Quantity > 99 - request.Quantity)
             {
                 return Result.Failure(ApplicationErrors.Conflict("Cart.InvalidQuantity", "Cart quantity cannot exceed 99."));
@@ -308,12 +336,20 @@ internal sealed class UpdateCartItemQuantityCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("CartItem"));
         }
 
-        if (request.Quantity > 0 && !variants.Query().Any(variant =>
+        var variant = variants.Query().FirstOrDefault(variant =>
                 variant.Id == request.ProductVariantId &&
                 variant.IsActive &&
-                products.Query().Any(product => product.Id == variant.ProductId && product.IsActive)))
+                products.Query().Any(product => product.Id == variant.ProductId && product.IsActive));
+        if (request.Quantity > 0 && variant is null)
         {
             return Result.Failure(ApplicationErrors.NotFound("ProductVariant", request.ProductVariantId));
+        }
+
+        if (request.Quantity > 0 && variant is not null && request.Quantity > variant.PhysicalStock)
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Cart.StockNotEnough",
+                $"Only {variant.PhysicalStock} unit(s) of this product are available."));
         }
 
         if (request.Quantity <= 0)
@@ -441,6 +477,8 @@ internal sealed class GetCartItemsByCartQueryHandler(IRepository<CartItemEntity>
     {
         return Task.FromResult(Result.Success(cartItems.Query()
             .Where(item => item.CartId == request.CartId)
+            .OrderBy(item => item.AddedAt)
+            .ThenBy(item => item.Id)
             .Select(item => new CartItemResponse(item.Id, item.CartId, item.ProductVariantId, item.Quantity, item.AddedAt, item.UpdatedAt))
             .ToList()));
     }
@@ -733,6 +771,8 @@ internal static class CustomerMappings
             cart.UpdatedAt,
             cartItems.Query()
                 .Where(item => item.CartId == cart.Id)
+                .OrderBy(item => item.AddedAt)
+                .ThenBy(item => item.Id)
                 .Select(item => new CartItemSummaryResponse(item.Id, item.ProductVariantId, item.Quantity))
                 .ToList(),
             appliedCoupons.Query()

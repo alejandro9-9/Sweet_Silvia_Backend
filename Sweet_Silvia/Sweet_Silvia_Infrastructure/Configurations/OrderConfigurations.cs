@@ -18,7 +18,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<OrderEntity>
         builder.ToTable("Orders");
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.UserId).IsRequired();
-        builder.Property(entity => entity.AddressId).IsRequired();
+        builder.Property(entity => entity.AddressId).IsRequired(false);
         builder.Property(entity => entity.ShippingAgencyId);
         builder.Property(entity => entity.CouponId);
         builder.Property(entity => entity.CouponAppliedQuantity);

@@ -51,6 +51,13 @@ internal sealed class CreatePendingPaymentCommandHandler(
                 "This payment method requires a gateway integration flow."));
         }
 
+        if (paymentMethod.Type == PaymentMethodType.Cash && (order.ShippingAgencyId.HasValue || !order.AddressId.HasValue))
+        {
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "PaymentMethod.CashUnavailableForOlva",
+                "Cash payment is not available for Olva Courier shipments."));
+        }
+
         if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(

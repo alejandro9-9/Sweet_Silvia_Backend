@@ -31,7 +31,7 @@ public sealed class Shipment : Entity
     public DateTimeOffset? DeliveredAt { get; private set; }
     public string? Observation { get; private set; }
 
-    public static Shipment Create(Guid orderId, Guid courierId, Money shippingCost)
+    public static Shipment Create(Guid orderId, Guid courierId, Money shippingCost, string? observation = null)
     {
         if (orderId == Guid.Empty)
         {
@@ -49,6 +49,7 @@ public sealed class Shipment : Entity
         }
 
         var result = new Shipment(Guid.NewGuid(), orderId, courierId, ShipmentStatus.Pending, null, null, shippingCost, DateTimeOffset.UtcNow);
+        result.Observation = string.IsNullOrWhiteSpace(observation) ? null : observation.Trim();
         result.AddDomainEvent(new ShipmentCreatedEvent(result.Id));
         return result;
     }
@@ -75,6 +76,13 @@ public sealed class Shipment : Entity
 
     public void ChangeStatus(ShipmentStatus status, string? observation = null)
     {
+        if (status == Status)
+        {
+            Observation = string.IsNullOrWhiteSpace(observation) ? null : observation.Trim();
+            AddDomainEvent(new ShipmentUpdatedEvent(Id));
+            return;
+        }
+
         if (!IsValidTransition(Status, status))
         {
             throw new InvalidOperationException($"Shipment cannot change from {Status} to {status}.");

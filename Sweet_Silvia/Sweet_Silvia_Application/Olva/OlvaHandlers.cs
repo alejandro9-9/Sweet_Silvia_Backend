@@ -20,7 +20,7 @@ internal sealed class GetOlvaAgenciesQueryHandler(IRepository<OlvaAgencyEntity> 
     public Task<Result<List<CachedOlvaAgencyResponse>>> Handle(GetOlvaAgenciesQuery request, CancellationToken cancellationToken)
     {
         var page = Math.Max(request.Page, 1);
-        var pageSize = Math.Clamp(request.PageSize, 1, 50);
+        var pageSize = Math.Clamp(request.PageSize, 1, 200);
         var query = olvaAgencies.Query().Where(agency => agency.IsActive).AsEnumerable();
 
         if (!string.IsNullOrWhiteSpace(request.Q))
@@ -34,20 +34,17 @@ internal sealed class GetOlvaAgenciesQueryHandler(IRepository<OlvaAgencyEntity> 
 
         if (!string.IsNullOrWhiteSpace(request.Department))
         {
-            var department = OlvaLocationNames.Normalize(request.Department);
-            query = query.Where(agency => OlvaLocationNames.Normalize(agency.Department) == department);
+            query = query.Where(agency => OlvaLocationNames.Matches(agency.Department, request.Department));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Province))
         {
-            var province = OlvaLocationNames.Normalize(request.Province);
-            query = query.Where(agency => OlvaLocationNames.Normalize(agency.Province) == province);
+            query = query.Where(agency => OlvaLocationNames.Matches(agency.Province, request.Province));
         }
 
         if (!string.IsNullOrWhiteSpace(request.District))
         {
-            var district = OlvaLocationNames.Normalize(request.District);
-            query = query.Where(agency => OlvaLocationNames.Normalize(agency.District) == district);
+            query = query.Where(agency => OlvaLocationNames.Matches(agency.District, request.District));
         }
 
         var agencies = query
@@ -131,9 +128,9 @@ internal sealed class SyncOlvaAgenciesCommandHandler(
         if (string.IsNullOrWhiteSpace(request.Q))
         {
             var scopedExisting = existingAgencies.Values.Where(agency =>
-                MatchesScope(agency.Department, request.Department) &&
-                MatchesScope(agency.Province, request.Province) &&
-                MatchesScope(agency.District, request.District));
+                OlvaLocationNames.Matches(agency.Department, request.Department) &&
+                OlvaLocationNames.Matches(agency.Province, request.Province) &&
+                OlvaLocationNames.Matches(agency.District, request.District));
 
             foreach (var agency in scopedExisting)
             {
@@ -150,8 +147,6 @@ internal sealed class SyncOlvaAgenciesCommandHandler(
         return Result.Success(new SyncOlvaAgenciesResponse(imported, updated, deactivated));
     }
 
-    private static bool MatchesScope(string? value, string? scope)
-        => string.IsNullOrWhiteSpace(scope) || string.Equals(value, scope.Trim(), StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class GetCachedOlvaDepartmentsQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
@@ -290,7 +285,15 @@ internal static class OlvaAgencyMappings
 internal static class OlvaLocationNames
 {
     public static string Normalize(string? value)
-        => value?.Trim().ToUpperInvariant() ?? string.Empty;
+    {
+        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        return normalized.StartsWith("CERCADO DE ", StringComparison.Ordinal)
+            ? normalized["CERCADO DE ".Length..].Trim()
+            : normalized;
+    }
+
+    public static bool Matches(string? actual, string? requested)
+        => string.IsNullOrWhiteSpace(requested) || Normalize(actual) == Normalize(requested);
 
     public static bool IsValid(string? value)
     {

@@ -18,4 +18,13 @@ internal static class ApplicationErrors
 
     public static Error Unauthorized =>
         new("Auth.Unauthorized", "Invalid credentials.") { StatusCode = 401 };
+
+    public static Error InvalidCredentials =>
+        new("Auth.InvalidCredentials", "The email or password is incorrect.") { StatusCode = 401 };
+
+    public static Error UserBlocked =>
+        new("Auth.UserBlocked", "This account is blocked.") { StatusCode = 403 };
+
+    public static Error UserInactive =>
+        new("Auth.UserInactive", "This account is inactive.") { StatusCode = 403 };
 }

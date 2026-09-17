@@ -10,7 +10,7 @@ public sealed class Order : Entity
 
     private Order() { }
 
-    public Order(Guid id, Guid userId, Guid addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public Order(Guid id, Guid userId, Guid? addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, OrderStatus status, DateTimeOffset createdAt, Money subtotal, Money discountTotal, Money shippingCost, Money total)
         : base(id)
     {
         UserId = userId;
@@ -27,7 +27,7 @@ public sealed class Order : Entity
     }
 
     public Guid UserId { get; private set; }
-    public Guid AddressId { get; private set; }
+    public Guid? AddressId { get; private set; }
     public Guid? ShippingAgencyId { get; private set; }
     public Guid? CouponId { get; private set; }
     public int? CouponAppliedQuantity { get; private set; }
@@ -40,7 +40,7 @@ public sealed class Order : Entity
     public Money Total { get; private set; } = null!;
     public IReadOnlyCollection<OrderItemEntity> Items => _items.AsReadOnly();
 
-    public static Order Create(Guid userId, Guid addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    public static Order Create(Guid userId, Guid? addressId, Guid? shippingAgencyId, Guid? couponId, int? couponAppliedQuantity, Money subtotal, Money discountTotal, Money shippingCost, Money total)
     {
         Validate(userId, addressId, subtotal, discountTotal, shippingCost, total);
 
@@ -95,16 +95,11 @@ public sealed class Order : Entity
         };
     }
 
-    private static void Validate(Guid userId, Guid addressId, Money subtotal, Money discountTotal, Money shippingCost, Money total)
+    private static void Validate(Guid userId, Guid? addressId, Money subtotal, Money discountTotal, Money shippingCost, Money total)
     {
         if (userId == Guid.Empty)
         {
             throw new ArgumentException("User id is required.", nameof(userId));
-        }
-
-        if (addressId == Guid.Empty)
-        {
-            throw new ArgumentException("Address id is required.", nameof(addressId));
         }
 
         if (subtotal is null)
