@@ -63,6 +63,12 @@ public sealed class OlvaController(ISender sender) : ControllerBase
             cancellationToken));
     }
 
+    [HttpGet("quote-locations")]
+    public async Task<IActionResult> GetQuoteLocations(CancellationToken cancellationToken)
+    {
+        return this.ToActionResult(await sender.Send(new GetOlvaQuoteLocationsQuery(), cancellationToken));
+    }
+
     [HttpGet("locations/departments")]
     public async Task<IActionResult> GetDepartments(CancellationToken cancellationToken)
     {
@@ -91,7 +97,10 @@ public sealed class OlvaController(ISender sender) : ControllerBase
                 request.DeliveryType,
                 request.ShipmentType,
                 request.Weight,
-                request.PartnerRate),
+                request.PartnerRate,
+                request.Length,
+                request.Width,
+                request.Height),
             cancellationToken));
     }
 
@@ -108,7 +117,10 @@ public sealed record QuoteOlvaShipmentRequest(
     string? DeliveryType = "O",
     int? ShipmentType = null,
     decimal? Weight = 1,
-    bool? PartnerRate = null);
+    bool? PartnerRate = null,
+    decimal? Length = null,
+    decimal? Width = null,
+    decimal? Height = null);
 
 public sealed record TrackOlvaShipmentRequest(string OrderNumber, string? OrderCode = null);
 

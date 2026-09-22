@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Olva;
@@ -69,20 +70,43 @@ internal sealed class OlvaCourierClient(HttpClient httpClient, OlvaOptions optio
 
     public Task<Result<OlvaQuoteResponse>> QuoteAsync(OlvaQuoteRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Origin) || string.IsNullOrWhiteSpace(request.Destination))
+        if (!IsUbigeo(request.Origin) || !IsUbigeo(request.Destination))
         {
-            return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.InvalidQuote", "Origin and destination ubigeo are required.")));
+            return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.InvalidQuote", "Origin and destination must be six-digit ubigeos.")));
         }
 
-        return PostRawDataAsync("account/quote", new
+        if (request.ShipmentType is not (1 or 2))
+        {
+            return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.InvalidShipmentType", "Shipment type must be 1 (document) or 2 (package).")));
+        }
+
+        if (request.Weight is <= 0)
+        {
+            return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.InvalidWeight", "Weight must be greater than zero.")));
+        }
+
+        if (request.ShipmentType == 2 && (request.Length is not > 0 || request.Width is not > 0 || request.Height is not > 0))
+        {
+            return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.PackageDimensionsRequired", "Length, width and height are required for packages.")));
+        }
+
+        return PostRawDataAsync("quotes", new
         {
             origin = request.Origin.Trim(),
             destination = request.Destination.Trim(),
             delivery_type = request.DeliveryType,
             shipment_type = request.ShipmentType,
             weight = request.Weight,
-            partner_rate = request.PartnerRate
+            partner_rate = request.PartnerRate,
+            length = request.Length,
+            width = request.Width,
+            height = request.Height
         }, cancellationToken);
+    }
+
+    private static bool IsUbigeo(string? value)
+    {
+        return value is { Length: 6 } && value.All(char.IsDigit);
     }
 
     public Task<Result<OlvaTrackingResponse>> TrackAsync(string orderNumber, string? orderCode, CancellationToken cancellationToken = default)
@@ -144,6 +168,13 @@ internal sealed class OlvaCourierClient(HttpClient httpClient, OlvaOptions optio
         }
 
         using var response = await httpClient.PostAsJsonAsync(path, body, JsonOptions, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.BadGateway)
+        {
+            return Result.Failure<OlvaQuoteResponse>(new Error(
+                "Olva.QuoteUnavailable",
+                "Olva no pudo cotizar este paquete en este momento. El proveedor devolvio un error 502; intenta nuevamente mas tarde."));
+        }
+
         var documentResult = await ReadDocumentAsync(response, cancellationToken);
         if (documentResult.IsFailure)
         {

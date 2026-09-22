@@ -80,6 +80,23 @@ public sealed class RefreshToken : Entity
 
     public bool IsValid(DateTimeOffset currentDate) => !IsRevoked && !IsExpired(currentDate);
 
+    public void Rotate(string tokenHash, DateTimeOffset expiresAt)
+    {
+        if (string.IsNullOrWhiteSpace(tokenHash))
+        {
+            throw new ArgumentException("Token hash is required.", nameof(tokenHash));
+        }
+
+        if (expiresAt <= LastUsedAt.GetValueOrDefault(CreatedAt))
+        {
+            throw new ArgumentException("Expiration date should be greater than the last use date.", nameof(expiresAt));
+        }
+
+        TokenHash = tokenHash.Trim();
+        ExpiresAt = expiresAt;
+        RevokedAt = null;
+    }
+
     public void MarkUsed(DateTimeOffset usedAt, string? ipAddress, string? userAgent)
     {
         if (usedAt < CreatedAt)

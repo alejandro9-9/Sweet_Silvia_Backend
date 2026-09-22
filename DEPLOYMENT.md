@@ -36,9 +36,13 @@ Use `Sweet_Silvia/.env.stable.example` as the complete checklist. Keep ordinary 
 - `Izipay__HashKey`
 - `Olva__ApiKey` when the live courier integration is enabled
 
+Set `Orders__PendingPaymentExpirationHours` (24 by default). A hosted cleanup process cancels only orders still in `PendingReceipt` after this period and releases their stock reservation transactionally. Orders with a receipt already under review are left for the operations team.
+
 For the first deployment, keep `Google__Enabled=false` and `Izipay__Enabled=false` until the production origins and external credentials have been verified. The frontend build must use `VITE_ENABLE_MOCKS=false`, `VITE_IZIPAY_ENABLED=false`, the public API URL in `VITE_API_URL`, and an empty `VITE_GOOGLE_CLIENT_ID` while Google OAuth is disabled. Enable Google only after the final frontend origin has been added to Google Cloud and the same web Client ID is configured in both services.
 
 The Brevo sender must be a verified address. A syntactically valid placeholder is not sufficient for delivery, so configure `Email__From` together with `Email__ApiKey` before testing registration or email verification in production.
+
+Before publishing, run `dotnet test Sweet_Silvia/Sweet_Silvia.sln --configuration Release`. The frontend pipeline must pass `npm run test`, `npm run lint`, `npm run build` and `npm audit --omit=dev`.
 
 Do not configure `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. Assign an ECS task role with only these object permissions on the two application buckets:
 

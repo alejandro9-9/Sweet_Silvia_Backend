@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Sweet_Silvia_Application.Abstractions.Audit;
 using Sweet_Silvia_Application.Abstractions.Email;
@@ -20,6 +21,7 @@ using Sweet_Silvia_Domain.RefreshToken;
 using Sweet_Silvia_Domain.User;
 using Sweet_Silvia_Infrastructure.Abstractions.Audit;
 using Sweet_Silvia_Infrastructure.Abstractions.Email;
+using Sweet_Silvia_Infrastructure.Abstractions.Orders;
 using Sweet_Silvia_Infrastructure.Abstractions.Payments;
 using Sweet_Silvia_Infrastructure.Abstractions.Security;
 using Sweet_Silvia_Infrastructure.Abstractions.Shipping;
@@ -31,7 +33,7 @@ namespace Sweet_Silvia_Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         var connectionString = configuration.GetConnectionString("SweetSilviaDatabase")
             ?? throw new InvalidOperationException("Connection string 'SweetSilviaDatabase' not found.");
@@ -44,13 +46,15 @@ public static class DependencyInjection
         var olvaOptions = configuration.GetSection("Olva").Get<OlvaOptions>() ?? new OlvaOptions();
         var izipayOptions = configuration.GetSection("Izipay").Get<IzipayOptions>() ?? new IzipayOptions();
         var fileStorageOptions = configuration.GetSection("FileStorage").Get<FileStorageOptions>() ?? new FileStorageOptions();
+        var orderExpirationOptions = configuration.GetSection("Orders").Get<OrderExpirationOptions>() ?? new OrderExpirationOptions();
 
         ValidateJwt(jwtOptions);
         ValidateRefreshToken(refreshTokenOptions);
-        ValidateEmail(emailVerificationOptions, emailDeliveryOptions);
+        ValidateEmail(emailVerificationOptions, emailDeliveryOptions, environment);
         ValidateGoogleAuth(googleAuthOptions);
         ValidateIzipay(izipayOptions);
         ValidateFileStorage(fileStorageOptions);
+        ValidateOrderExpiration(orderExpirationOptions);
 
         static void ConfigureDbContext(DbContextOptionsBuilder options, string databaseConnectionString)
         {
@@ -64,6 +68,9 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddScoped(typeof(IRepository<>), typeof(EntityRepository<>));
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.AddHostedService<RefreshTokenCleanupService>();
+        services.AddSingleton(orderExpirationOptions);
+        services.AddHostedService<OrderExpirationService>();
 
         services.AddTransient<IDateTimeProvider, DateTimeProvider>();
         services.AddSingleton(jwtOptions);
@@ -229,7 +236,7 @@ public static class DependencyInjection
         }
     }
 
-    private static void ValidateEmail(EmailVerificationOptions verificationOptions, EmailDeliveryOptions deliveryOptions)
+    private static void ValidateEmail(EmailVerificationOptions verificationOptions, EmailDeliveryOptions deliveryOptions, IHostEnvironment environment)
     {
         if (verificationOptions.CodeExpirationMinutes <= 0 || verificationOptions.ResendCooldownSeconds < 0)
         {
@@ -242,6 +249,11 @@ public static class DependencyInjection
         if (!useBrevo && !useLog)
         {
             throw new InvalidOperationException("Email provider must be 'Brevo' or 'Log'.");
+        }
+
+        if (useLog && !environment.IsDevelopment())
+        {
+            throw new InvalidOperationException("Email:Provider=Log is only allowed in Development. Configure Brevo before deploying.");
         }
 
         if (useBrevo &&
@@ -301,6 +313,14 @@ public static class DependencyInjection
         {
             throw new InvalidOperationException(
                 "S3 storage requires distinct public and private buckets, a region and a public HTTPS base URL.");
+        }
+    }
+
+    private static void ValidateOrderExpiration(OrderExpirationOptions options)
+    {
+        if (options.PendingPaymentExpirationHours is < 1 or > 168)
+        {
+            throw new InvalidOperationException("Orders:PendingPaymentExpirationHours must be between 1 and 168.");
         }
     }
 

@@ -332,16 +332,8 @@ internal sealed class RefreshSessionCommandHandler(
         }
 
         token.MarkUsed(now, request.IpAddress, request.UserAgent);
-        token.Revoke(now);
         var nextRefreshToken = refreshTokenService.Generate(now);
-        refreshTokens.Add(RefreshTokenEntity.Create(
-            user.Id,
-            nextRefreshToken.TokenHash,
-            nextRefreshToken.ExpiresAt,
-            request.DeviceInfo,
-            request.IpAddress,
-            request.UserAgent,
-            now));
+        token.Rotate(nextRefreshToken.TokenHash, nextRefreshToken.ExpiresAt);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var accessToken = jwtTokenGenerator.GenerateToken(LoginCommandHandler.CreateClaims(user, role));

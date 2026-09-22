@@ -38,6 +38,13 @@ public sealed record CachedOlvaAgencyResponse(
     double? Longitude,
     DateTimeOffset LastSyncedAt);
 
+public sealed record OlvaQuoteLocationResponse(
+    string Ubigeo,
+    string Department,
+    string Province,
+    string District,
+    int AgencyCount);
+
 public sealed record SyncOlvaAgenciesResponse(int Imported, int Updated, int Deactivated);
 
 public sealed record OlvaQuoteRequest(
@@ -46,7 +53,10 @@ public sealed record OlvaQuoteRequest(
     string? DeliveryType,
     int? ShipmentType,
     decimal? Weight,
-    bool? PartnerRate);
+    bool? PartnerRate,
+    decimal? Length,
+    decimal? Width,
+    decimal? Height);
 
 public sealed record OlvaQuoteResponse(JsonElement Data);
 
@@ -84,6 +94,8 @@ public sealed record GetCachedOlvaProvincesQuery(string Department) : IQuery<Lis
 
 public sealed record GetCachedOlvaDistrictsQuery(string Department, string Province) : IQuery<List<string>>;
 
+public sealed record GetOlvaQuoteLocationsQuery : IQuery<List<OlvaQuoteLocationResponse>>;
+
 public sealed record SyncOlvaAgenciesCommand(
     string? Q,
     string? Department,
@@ -102,6 +114,9 @@ public sealed record QuoteOlvaShipmentQuery(
     string? DeliveryType,
     int? ShipmentType,
     decimal? Weight,
-    bool? PartnerRate) : IQuery<OlvaQuoteResponse>;
+    bool? PartnerRate,
+    decimal? Length,
+    decimal? Width,
+    decimal? Height) : IQuery<OlvaQuoteResponse>;
 
 public sealed record TrackOlvaShipmentQuery(string OrderNumber, string? OrderCode) : IQuery<OlvaTrackingResponse>;

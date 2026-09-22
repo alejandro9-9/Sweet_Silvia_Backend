@@ -10,6 +10,8 @@ public interface IRefreshTokenRepository
 
     Task<List<RefreshToken>> GetActiveByUserIdAsync(Guid userId, CancellationToken cancellationToken = default);
 
+    Task<int> DeleteInactiveAsync(DateTimeOffset currentDate, CancellationToken cancellationToken = default);
+
     void Add(RefreshToken token);
 
     void Update(RefreshToken token);

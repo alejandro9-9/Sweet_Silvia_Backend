@@ -2,6 +2,9 @@ using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Domain.Abstractions;
 using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
+using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
+using DistrictEntity = Sweet_Silvia_Domain.District.District;
+using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 
 namespace Sweet_Silvia_Application.Olva;
 
@@ -208,6 +211,74 @@ internal sealed class GetCachedOlvaDistrictsQueryHandler(IRepository<OlvaAgencyE
     }
 }
 
+internal sealed class GetOlvaQuoteLocationsQueryHandler(
+    IRepository<OlvaAgencyEntity> olvaAgencies,
+    IRepository<DepartmentEntity> departments,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DistrictEntity> districts)
+    : IQueryHandler<GetOlvaQuoteLocationsQuery, List<OlvaQuoteLocationResponse>>
+{
+    public Task<Result<List<OlvaQuoteLocationResponse>>> Handle(GetOlvaQuoteLocationsQuery request, CancellationToken cancellationToken)
+    {
+        var localLocations = (
+            from district in districts.Query()
+            join province in provinces.Query() on district.ProvinceId equals province.Id
+            join department in departments.Query() on province.DepartmentId equals department.Id
+            where district.IsActive && province.IsActive && department.IsActive && district.Ubigeo != null
+            select new
+            {
+                Department = department.Name,
+                Province = province.Name,
+                District = district.Name,
+                district.Ubigeo
+            }).ToList();
+
+        var locations = olvaAgencies.Query()
+            .Where(agency => agency.IsActive)
+            .AsEnumerable()
+            .Select(agency =>
+            {
+                var location = localLocations.FirstOrDefault(candidate =>
+                    OlvaLocationNames.Matches(candidate.Department, agency.Department) &&
+                    OlvaLocationNames.Matches(candidate.Province, agency.Province) &&
+                    OlvaLocationNames.Matches(candidate.District, agency.District) &&
+                    IsUbigeo(candidate.Ubigeo));
+
+                return location is null
+                    ? null
+                    : new
+                    {
+                        location.Ubigeo,
+                        location.Department,
+                        location.Province,
+                        location.District,
+                        AgencyCode = agency.Code
+                    };
+            })
+            .Where(location => location is not null)
+            .GroupBy(location => location!.Ubigeo!, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var first = group.First()!;
+                return new OlvaQuoteLocationResponse(
+                    group.Key,
+                    first.Department,
+                    first.Province,
+                    first.District,
+                    group.Select(location => location!.AgencyCode).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            })
+            .OrderBy(location => location.Department)
+            .ThenBy(location => location.Province)
+            .ThenBy(location => location.District)
+            .ToList();
+
+        return Task.FromResult(Result.Success(locations));
+    }
+
+    private static bool IsUbigeo(string? value)
+        => value is { Length: 6 } && value.All(char.IsDigit);
+}
+
 internal sealed class GetOlvaDepartmentsQueryHandler(IOlvaCourierClient olvaCourierClient)
     : IQueryHandler<GetOlvaDepartmentsQuery, List<string>>
 {
@@ -247,7 +318,10 @@ internal sealed class QuoteOlvaShipmentQueryHandler(IOlvaCourierClient olvaCouri
                 request.DeliveryType,
                 request.ShipmentType,
                 request.Weight,
-                request.PartnerRate),
+                request.PartnerRate,
+                request.Length,
+                request.Width,
+                request.Height),
             cancellationToken);
     }
 }
