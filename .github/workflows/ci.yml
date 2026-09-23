@@ -18,3 +18,61 @@ jobs:
         run: dotnet restore Sweet_Silvia/Sweet_Silvia.sln
       - name: Test
         run: dotnet test Sweet_Silvia/Sweet_Silvia.sln --no-restore --configuration Release --logger "console;verbosity=minimal"
+
+  publish-image:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: sweet-silvia-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::145847015551:role/sweet-silvia-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve immutable image tag
+        id: image
+        shell: bash
+        run: |
+          image_tag="sha-${GITHUB_SHA::12}"
+          image_uri="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${image_tag}"
+          if aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=${image_tag}" >/dev/null 2>&1; then
+            exists=true
+          else
+            exists=false
+          fi
+          echo "tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "uri=${image_uri}" >> "$GITHUB_OUTPUT"
+          echo "exists=${exists}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Publish image summary
+        run: printf '### Backend image\n`%s`\n' '${{ steps.image.outputs.uri }}' >> "$GITHUB_STEP_SUMMARY"
