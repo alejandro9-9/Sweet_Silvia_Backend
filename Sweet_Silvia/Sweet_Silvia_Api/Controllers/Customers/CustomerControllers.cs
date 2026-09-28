@@ -19,7 +19,15 @@ public sealed class CartController(ISender sender) : ControllerBase
 {
     [HttpGet("me")]
     public async Task<IActionResult> GetActive(CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new GetActiveCartByUserQuery(User.GetUserId()), cancellationToken));
+    {
+        var result = await sender.Send(new GetActiveCartByUserQuery(User.GetUserId()), cancellationToken);
+        if (result.IsFailure && result.Error.Code == "Cart.NotFound")
+        {
+            return NoContent();
+        }
+
+        return this.ToActionResult(result);
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create(CancellationToken cancellationToken)
