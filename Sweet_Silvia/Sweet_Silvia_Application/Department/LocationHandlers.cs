@@ -272,3 +272,24 @@ internal sealed class GetDistrictsByProvinceQueryHandler(
         return Task.FromResult(Result.Success(query.Select(district => new DistrictResponse(district.Id, district.ProvinceId, district.Name, district.Ubigeo, district.IsActive)).ToList()));
     }
 }
+
+internal sealed class GetAllDistrictsQueryHandler(
+    IRepository<DistrictEntity> districts,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DepartmentEntity> departments)
+    : IQueryHandler<GetAllDistrictsQuery, List<DistrictResponse>>
+{
+    public Task<Result<List<DistrictResponse>>> Handle(GetAllDistrictsQuery request, CancellationToken cancellationToken)
+    {
+        var query = districts.Query()
+            .Where(district => (!request.OnlyActive || district.IsActive) &&
+                provinces.Query().Any(province => province.Id == district.ProvinceId && (!request.OnlyActive || province.IsActive) &&
+                    departments.Query().Any(department => department.Id == province.DepartmentId && (!request.OnlyActive || department.IsActive))));
+
+        var response = query
+            .Select(district => new DistrictResponse(district.Id, district.ProvinceId, district.Name, district.Ubigeo, district.IsActive))
+            .ToList();
+
+        return Task.FromResult(Result.Success(response));
+    }
+}

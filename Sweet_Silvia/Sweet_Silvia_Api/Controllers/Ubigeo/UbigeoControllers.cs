@@ -74,6 +74,11 @@ public sealed class ProvincesController(ISender sender) : ControllerBase
 [Route("api/districts")]
 public sealed class DistrictsController(ISender sender) : ControllerBase
 {
+    [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
+    [HttpGet]
+    public async Task<IActionResult> GetAll([FromQuery] bool onlyActive = false, CancellationToken cancellationToken = default)
+        => this.ToActionResult(await sender.Send(new GetAllDistrictsQuery(onlyActive), cancellationToken));
+
     [AllowAnonymous]
     [HttpGet("province/{provinceId:guid}")]
     public async Task<IActionResult> GetByProvince(Guid provinceId, [FromQuery] bool onlyActive = true, CancellationToken cancellationToken = default)

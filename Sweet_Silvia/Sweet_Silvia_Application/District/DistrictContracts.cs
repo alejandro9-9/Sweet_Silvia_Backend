@@ -13,3 +13,5 @@ public sealed record DeleteDistrictCommand(Guid Id) : ICommand;
 public sealed record GetDistrictByIdQuery(Guid Id) : IQuery<DistrictResponse>;
 
 public sealed record GetDistrictsByProvinceQuery(Guid ProvinceId, bool OnlyActive = true) : IQuery<List<DistrictResponse>>;
+
+public sealed record GetAllDistrictsQuery(bool OnlyActive = true) : IQuery<List<DistrictResponse>>;

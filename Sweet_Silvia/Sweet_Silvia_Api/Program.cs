@@ -157,8 +157,8 @@ if (applyMigrationsOnStartup)
     await app.ApplyMigrationsAsync();
 }
 app.UseForwardedHeaders();
-app.UseRateLimiter();
 app.UseCors("defaultCorsPolicy");
+app.UseRateLimiter();
 if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
