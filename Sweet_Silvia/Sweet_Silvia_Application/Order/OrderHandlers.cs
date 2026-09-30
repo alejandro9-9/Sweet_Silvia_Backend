@@ -1,6 +1,8 @@
 using Sweet_Silvia_Application.Abstractions.Messaging;
+using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.Courier;
+using Sweet_Silvia_Application.Olva;
 using Sweet_Silvia_Application.OrderItem;
 using Sweet_Silvia_Application.OrderStatusHistory;
 using Sweet_Silvia_Application.ShippingRate;
@@ -56,6 +58,7 @@ internal sealed class CreateOrderCommandHandler(
     IRepository<ShippingRateEntity> shippingRates,
     IRepository<OlvaAgencyEntity> olvaAgencies,
     IRepository<StockMovementEntity> stockMovements,
+    IOlvaCourierClient olvaCourierClient,
     IUnitOfWork unitOfWork)
     : ICommandHandler<CreateOrderCommand, Guid>
 {
@@ -63,10 +66,16 @@ internal sealed class CreateOrderCommandHandler(
     {
         const string storeCurrency = "PEN";
 
-        var shippingRate = await shippingRates.GetByIdAsync(request.ShippingRateId, cancellationToken);
-        if (shippingRate is null || !shippingRate.IsActive)
+        var usesLiveOlvaQuote = !request.ShippingRateId.HasValue;
+        var shippingRate = request.ShippingRateId.HasValue
+            ? await shippingRates.GetByIdAsync(request.ShippingRateId.Value, cancellationToken)
+            : null;
+        if ((!usesLiveOlvaQuote && (shippingRate is null || !shippingRate.IsActive)) ||
+            (usesLiveOlvaQuote && (!request.ShippingAgencyId.HasValue || request.ExpectedOlvaShippingCost is not > 0)))
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("ShippingRate", request.ShippingRateId));
+            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                "Shipping.InvalidRate",
+                "Selecciona una tarifa vigente o cotiza el envio Olva antes de crear el pedido."));
         }
 
         var address = request.AddressId.HasValue
@@ -77,7 +86,7 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", request.AddressId.Value));
         }
 
-        if (!request.AddressId.HasValue && shippingRate.DestinationType != ShippingDestinationType.Province)
+        if (!request.AddressId.HasValue && !usesLiveOlvaQuote && shippingRate!.DestinationType != ShippingDestinationType.Province)
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Shipping.AddressRequired",
@@ -96,12 +105,14 @@ internal sealed class CreateOrderCommandHandler(
 
         var department = departments.Query()
             .FirstOrDefault(item => item.Id == departmentId.Value && item.IsActive);
-        if (department is null)
+        if (department is null || (usesLiveOlvaQuote && department.DestinationType != ShippingDestinationType.Province))
         {
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", departmentId.Value));
         }
 
-        var courier = await couriers.GetByIdAsync(shippingRate.CourierId, cancellationToken);
+        var courier = usesLiveOlvaQuote
+            ? couriers.Query().FirstOrDefault(item => item.IsActive && item.Type == CourierType.Agency && item.Name.ToLower().Contains("olva"))
+            : await couriers.GetByIdAsync(shippingRate!.CourierId, cancellationToken);
         if (courier is null || !courier.IsActive)
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
@@ -109,7 +120,7 @@ internal sealed class CreateOrderCommandHandler(
                 "The selected shipping service is currently unavailable."));
         }
 
-        if (courier.Type != shippingRate.CourierType ||
+        if ((!usesLiveOlvaQuote && courier.Type != shippingRate!.CourierType) ||
             (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
@@ -117,8 +128,8 @@ internal sealed class CreateOrderCommandHandler(
                 "The selected shipping service is not compatible with the destination."));
         }
 
-        if (shippingRate.DestinationType != department.DestinationType ||
-            !shippingRate.AppliesTo(departmentId.Value, provinceId.Value, districtId.Value, department.DestinationType))
+        if (!usesLiveOlvaQuote && (shippingRate!.DestinationType != department.DestinationType ||
+            !shippingRate.AppliesTo(departmentId.Value, provinceId.Value, districtId.Value, department.DestinationType)))
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Shipping.InvalidRate",
@@ -146,8 +157,9 @@ internal sealed class CreateOrderCommandHandler(
         {
             var shippingAgency = await olvaAgencies.GetByIdAsync(request.ShippingAgencyId.Value, cancellationToken);
             if (shippingAgency is null || !shippingAgency.IsActive ||
-                !string.Equals(shippingAgency.Department, department.Name, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(shippingAgency.Province, province.Name, StringComparison.OrdinalIgnoreCase))
+                !OlvaLocationNames.Matches(shippingAgency.Department, department.Name) ||
+                !OlvaLocationNames.Matches(shippingAgency.Province, province.Name) ||
+                !OlvaLocationNames.Matches(shippingAgency.District, district.Name))
             {
                 return Result.Failure<Guid>(ApplicationErrors.Conflict(
                     "Shipping.InvalidAgency",
@@ -269,17 +281,62 @@ internal sealed class CreateOrderCommandHandler(
 
         var subtotal = Money.Create(lines.Sum(item => item.UnitPrice * item.Quantity), storeCurrency);
         var discountTotal = Money.Create(lines.Sum(item => item.DiscountAmount), storeCurrency);
-        var baseShippingCost = shippingRate.CalculateCost(subtotal);
-        var totalQuantity = lines.Sum(item => item.Quantity);
-        var volumePricing = ShippingVolumeCalculator.Calculate(
-            department.DestinationType,
-            lines.Select(line => new ShippingPackageItem(
+        decimal shippingAmount;
+        if (usesLiveOlvaQuote)
+        {
+            var package = OlvaQuotePricing.CalculatePackage(lines.Select(line => OlvaQuotePricing.ToPackageItem(
                 line.Quantity,
+                line.Product.Name,
                 line.Variant.ShippingWeightKg,
                 line.Variant.ShippingLengthCm,
                 line.Variant.ShippingWidthCm,
                 line.Variant.ShippingHeightCm)).ToList());
-        var shippingCost = Money.Create(baseShippingCost.Amount + volumePricing.Surcharge, storeCurrency);
+            var quote = await olvaCourierClient.QuoteAsync(
+                new OlvaQuoteRequest(
+                    OlvaQuotePricing.CheckoutOriginUbigeo,
+                    district.Ubigeo ?? string.Empty,
+                    "O",
+                    2,
+                    package.ActualWeightKg,
+                    OlvaQuotePricing.CheckoutPartnerRate,
+                    package.LengthCm,
+                    package.WidthCm,
+                    package.HeightCm),
+                cancellationToken);
+            if (quote.IsFailure)
+            {
+                return Result.Failure<Guid>(quote.Error);
+            }
+
+            if (!OlvaQuotePricing.TryReadCost(quote.Value.Data, out shippingAmount))
+            {
+                return Result.Failure<Guid>(new Error(
+                    "Olva.QuotePriceMissing",
+                    "Olva respondio sin un precio de cotizacion reconocible."));
+            }
+
+            if (Math.Abs(shippingAmount - request.ExpectedOlvaShippingCost!.Value) > 0.01m)
+            {
+                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                    "Shipping.QuoteChanged",
+                    "La tarifa de Olva cambio. Actualiza la cotizacion antes de confirmar el pedido."));
+            }
+        }
+        else
+        {
+            var baseShippingCost = shippingRate!.CalculateCost(subtotal);
+            var volumePricing = ShippingVolumeCalculator.Calculate(
+                department.DestinationType,
+                lines.Select(line => new ShippingPackageItem(
+                    line.Quantity,
+                    line.Variant.ShippingWeightKg,
+                    line.Variant.ShippingLengthCm,
+                    line.Variant.ShippingWidthCm,
+                    line.Variant.ShippingHeightCm)).ToList());
+            shippingAmount = baseShippingCost.Amount + volumePricing.Surcharge;
+        }
+
+        var shippingCost = Money.Create(shippingAmount, storeCurrency);
         var total = Money.Create(subtotal.Amount - discountTotal.Amount + shippingCost.Amount, storeCurrency);
 
         var order = OrderEntity.Create(

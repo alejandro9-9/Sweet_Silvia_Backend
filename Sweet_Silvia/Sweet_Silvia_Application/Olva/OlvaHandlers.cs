@@ -1,9 +1,15 @@
 using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Abstractions.Shipping;
+using Sweet_Silvia_Application.Common;
+using Sweet_Silvia_Application.ShippingRate;
 using Sweet_Silvia_Domain.Abstractions;
 using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
+using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
+using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
 using DepartmentEntity = Sweet_Silvia_Domain.Department.Department;
 using DistrictEntity = Sweet_Silvia_Domain.District.District;
+using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
+using ProductEntity = Sweet_Silvia_Domain.Product.Product;
 using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 
 namespace Sweet_Silvia_Application.Olva;
@@ -323,6 +329,135 @@ internal sealed class QuoteOlvaShipmentQueryHandler(IOlvaCourierClient olvaCouri
                 request.Width,
                 request.Height),
             cancellationToken);
+    }
+}
+
+internal sealed class QuoteCustomerOlvaShipmentQueryHandler(
+    IRepository<CartEntity> carts,
+    IRepository<CartItemEntity> cartItems,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductEntity> products,
+    IRepository<DistrictEntity> districts,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DepartmentEntity> departments,
+    IRepository<OlvaAgencyEntity> agencies,
+    IOlvaCourierClient olvaCourierClient)
+    : IQueryHandler<QuoteCustomerOlvaShipmentQuery, OlvaCheckoutQuoteResponse>
+{
+    public async Task<Result<OlvaCheckoutQuoteResponse>> Handle(
+        QuoteCustomerOlvaShipmentQuery request,
+        CancellationToken cancellationToken)
+    {
+        var district = await districts.GetByIdAsync(request.DistrictId, cancellationToken);
+        var agency = await agencies.GetByIdAsync(request.AgencyId, cancellationToken);
+        var province = district is null ? null : await provinces.GetByIdAsync(district.ProvinceId, cancellationToken);
+        var department = province is null ? null : await departments.GetByIdAsync(province.DepartmentId, cancellationToken);
+        if (district is null || !district.IsActive || province is null || !province.IsActive ||
+            department is null || !department.IsActive || agency is null || !agency.IsActive ||
+            !OlvaLocationNames.Matches(agency.District, district.Name) ||
+            !OlvaLocationNames.Matches(agency.Province, province.Name) ||
+            !OlvaLocationNames.Matches(agency.Department, department.Name))
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Shipping.InvalidAgency",
+                "La agencia Olva seleccionada no corresponde al distrito de destino."));
+        }
+
+        if (district.Ubigeo is not { Length: 6 } || !district.Ubigeo.All(char.IsDigit))
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Shipping.DestinationUbigeoMissing",
+                "El distrito seleccionado no tiene un ubigeo valido para cotizar con Olva."));
+        }
+
+        var cart = carts.Query().FirstOrDefault(item => item.UserId == request.UserId && item.IsActive);
+        if (cart is null)
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.NotFound("Cart"));
+        }
+
+        var lines = cartItems.Query().Where(item => item.CartId == cart.Id).ToList();
+        if (lines.Count == 0)
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict("Order.EmptyCart", "El carrito esta vacio."));
+        }
+
+        var variantIds = lines.Select(item => item.ProductVariantId).ToList();
+        var currentVariants = variants.Query()
+            .Where(variant => variantIds.Contains(variant.Id) && variant.IsActive)
+            .ToDictionary(variant => variant.Id);
+        if (currentVariants.Count != lines.Select(item => item.ProductVariantId).Distinct().Count())
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Order.InvalidCartItem",
+                "Hay productos del carrito que no se pueden cotizar."));
+        }
+
+        var productIds = currentVariants.Values.Select(variant => variant.ProductId).Distinct().ToList();
+        var currentProducts = products.Query()
+            .Where(product => productIds.Contains(product.Id) && product.IsActive)
+            .ToDictionary(product => product.Id);
+        if (currentProducts.Count != productIds.Count)
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Order.InvalidCartItem",
+                "Hay productos del carrito que no se pueden cotizar."));
+        }
+
+        var packageItems = lines.Select(line =>
+        {
+            var variant = currentVariants[line.ProductVariantId];
+            var product = currentProducts[variant.ProductId];
+            return OlvaQuotePricing.ToPackageItem(
+                line.Quantity,
+                product.Name,
+                variant.ShippingWeightKg,
+                variant.ShippingLengthCm,
+                variant.ShippingWidthCm,
+                variant.ShippingHeightCm);
+        }).ToList();
+
+        var package = OlvaQuotePricing.CalculatePackage(packageItems);
+        if (package.ActualWeightKg <= 0 || package.LengthCm <= 0 || package.WidthCm <= 0 || package.HeightCm <= 0)
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Shipping.PackageDimensionsInvalid",
+                "Configura el peso y las dimensiones de los productos antes de cotizar."));
+        }
+
+        var quote = await olvaCourierClient.QuoteAsync(
+            new OlvaQuoteRequest(
+                OlvaQuotePricing.CheckoutOriginUbigeo,
+                district.Ubigeo,
+                "O",
+                2,
+                package.ActualWeightKg,
+                OlvaQuotePricing.CheckoutPartnerRate,
+                package.LengthCm,
+                package.WidthCm,
+                package.HeightCm),
+            cancellationToken);
+        if (quote.IsFailure)
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(quote.Error);
+        }
+
+        if (!OlvaQuotePricing.TryReadCost(quote.Value.Data, out var cost))
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(new Error(
+                "Olva.QuotePriceMissing",
+                "Olva respondio sin un precio de cotizacion reconocible."));
+        }
+
+        return Result.Success(new OlvaCheckoutQuoteResponse(
+            cost,
+            "PEN",
+            package.ActualWeightKg,
+            package.VolumetricWeightKg,
+            package.ChargeableWeightKg,
+            package.LengthCm,
+            package.WidthCm,
+            package.HeightCm));
     }
 }
 

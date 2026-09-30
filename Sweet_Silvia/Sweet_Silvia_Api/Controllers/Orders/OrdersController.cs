@@ -64,7 +64,8 @@ public sealed class OrdersController(ISender sender) : ControllerBase
             request.ShippingDepartmentId,
             request.ShippingProvinceId,
             request.ShippingDistrictId,
-            request.CouponId), cancellationToken));
+            request.CouponId,
+            request.ExpectedOlvaShippingCost), cancellationToken));
     }
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
@@ -111,5 +112,5 @@ public sealed class OrderStatusHistoryController(ISender sender) : ControllerBas
         => this.ToActionResult(await sender.Send(new GetOrderStatusHistoryQuery(orderId), cancellationToken));
 }
 
-public sealed record CreateOrderRequest(Guid? AddressId, Guid ShippingRateId, Guid? ShippingAgencyId = null, Guid? ShippingDepartmentId = null, Guid? ShippingProvinceId = null, Guid? ShippingDistrictId = null, Guid? CouponId = null);
+public sealed record CreateOrderRequest(Guid? AddressId, Guid? ShippingRateId, Guid? ShippingAgencyId = null, Guid? ShippingDepartmentId = null, Guid? ShippingProvinceId = null, Guid? ShippingDistrictId = null, Guid? CouponId = null, decimal? ExpectedOlvaShippingCost = null);
 public sealed record ChangeOrderStatusRequest(OrderStatus Status, string? Observation);

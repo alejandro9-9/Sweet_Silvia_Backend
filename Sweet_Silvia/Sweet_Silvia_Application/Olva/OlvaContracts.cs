@@ -60,6 +60,16 @@ public sealed record OlvaQuoteRequest(
 
 public sealed record OlvaQuoteResponse(JsonElement Data);
 
+public sealed record OlvaCheckoutQuoteResponse(
+    decimal Cost,
+    string Currency,
+    decimal ActualWeightKg,
+    decimal VolumetricWeightKg,
+    decimal ChargeableWeightKg,
+    decimal LengthCm,
+    decimal WidthCm,
+    decimal HeightCm);
+
 public sealed record OlvaTrackingLocationResponse(string? Agency, string? Department);
 
 public sealed record OlvaTrackingEventResponse(
@@ -118,5 +128,8 @@ public sealed record QuoteOlvaShipmentQuery(
     decimal? Length,
     decimal? Width,
     decimal? Height) : IQuery<OlvaQuoteResponse>;
+
+public sealed record QuoteCustomerOlvaShipmentQuery(Guid UserId, Guid DistrictId, Guid AgencyId)
+    : IQuery<OlvaCheckoutQuoteResponse>;
 
 public sealed record TrackOlvaShipmentQuery(string OrderNumber, string? OrderCode) : IQuery<OlvaTrackingResponse>;

@@ -135,6 +135,14 @@ public sealed record SyncOlvaAgenciesRequest(
 [Authorize(Roles = ApiRoles.Customer)]
 public sealed class CustomerOlvaController(ISender sender) : ControllerBase
 {
+    [HttpPost("quote")]
+    public async Task<IActionResult> Quote(QuoteCustomerOlvaShipmentRequest request, CancellationToken cancellationToken)
+    {
+        return this.ToActionResult(await sender.Send(
+            new QuoteCustomerOlvaShipmentQuery(User.GetUserId(), request.DistrictId, request.AgencyId),
+            cancellationToken));
+    }
+
     [HttpPost("orders/{orderId:guid}/track")]
     public async Task<IActionResult> TrackOrder(Guid orderId, CancellationToken cancellationToken)
     {
@@ -170,3 +178,5 @@ public sealed class CustomerOlvaController(ISender sender) : ControllerBase
             cancellationToken));
     }
 }
+
+public sealed record QuoteCustomerOlvaShipmentRequest(Guid DistrictId, Guid AgencyId);
