@@ -1448,6 +1448,13 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("AvatarId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("avatar_01");
+
                     b.Property<string>("GoogleSubject")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");

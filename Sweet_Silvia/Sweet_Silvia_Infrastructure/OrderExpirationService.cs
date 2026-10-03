@@ -2,13 +2,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Sweet_Silvia_Application.Abstractions.Orders;
 using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.OrderItem;
 using Sweet_Silvia_Domain.OrderStatusHistory;
+using Sweet_Silvia_Domain.Payment;
 using Sweet_Silvia_Domain.ProductVariant;
 using Sweet_Silvia_Domain.StockMovement;
 using Sweet_Silvia_Infrastructure.Abstractions.Orders;
+using PaymentEntity = Sweet_Silvia_Domain.Payment.Payment;
 
 namespace Sweet_Silvia_Infrastructure;
 
@@ -39,9 +42,16 @@ internal sealed class OrderExpirationService(
             using (var scope = scopeFactory.CreateScope())
             {
                 var orders = scope.ServiceProvider.GetRequiredService<IRepository<Order>>();
+                var payments = scope.ServiceProvider.GetRequiredService<IRepository<PaymentEntity>>();
                 var cutoff = DateTimeOffset.UtcNow.AddHours(-options.PendingPaymentExpirationHours);
+                var now = DateTimeOffset.UtcNow;
+                var orderIdsWithValidGatewaySessions = payments.Query()
+                    .Where(payment => payment.Status == PaymentStatus.PendingGateway &&
+                        (!payment.GatewayExpiresAt.HasValue || payment.GatewayExpiresAt.Value > now))
+                    .Select(payment => payment.OrderId);
                 expiredOrderIds = await orders.Query()
-                    .Where(order => order.Status == OrderStatus.PendingReceipt && order.CreatedAt <= cutoff)
+                    .Where(order => order.Status == OrderStatus.PendingReceipt && order.CreatedAt <= cutoff &&
+                        !orderIdsWithValidGatewaySessions.Contains(order.Id))
                     .OrderBy(order => order.CreatedAt)
                     .Take(100)
                     .Select(order => order.Id)
@@ -69,6 +79,7 @@ internal sealed class OrderExpirationService(
         {
             using var scope = scopeFactory.CreateScope();
             var orders = scope.ServiceProvider.GetRequiredService<IRepository<Order>>();
+            var payments = scope.ServiceProvider.GetRequiredService<IRepository<PaymentEntity>>();
             var variants = scope.ServiceProvider.GetRequiredService<IRepository<ProductVariant>>();
             var stockMovements = scope.ServiceProvider.GetRequiredService<IRepository<StockMovement>>();
             var histories = scope.ServiceProvider.GetRequiredService<IRepository<OrderStatusHistory>>();
@@ -76,6 +87,23 @@ internal sealed class OrderExpirationService(
 
             var order = await orders.GetByIdAsync(orderId, cancellationToken);
             if (order is null || order.Status != OrderStatus.PendingReceipt)
+            {
+                return;
+            }
+
+            var checkoutLock = scope.ServiceProvider.GetRequiredService<IUserCheckoutLock>();
+            await using var userLock = await checkoutLock.AcquireAsync(order.UserId, cancellationToken);
+            order = await orders.GetByIdAsync(orderId, cancellationToken);
+            if (order is null || order.Status != OrderStatus.PendingReceipt)
+            {
+                return;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            if (payments.Query().Any(payment =>
+                    payment.OrderId == order.Id &&
+                    payment.Status == PaymentStatus.PendingGateway &&
+                    (!payment.GatewayExpiresAt.HasValue || payment.GatewayExpiresAt.Value > now)))
             {
                 return;
             }

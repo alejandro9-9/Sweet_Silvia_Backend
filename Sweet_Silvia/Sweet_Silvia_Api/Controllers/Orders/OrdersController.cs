@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.Address;
+using Sweet_Silvia_Application.Izipay;
 using Sweet_Silvia_Application.Order;
 using Sweet_Silvia_Application.OrderItem;
 using Sweet_Silvia_Application.OrderStatusHistory;
@@ -56,7 +57,7 @@ public sealed class OrdersController(ISender sender) : ControllerBase
             }
         }
 
-        return this.ToCreatedResult(await sender.Send(new CreateOrderCommand(
+        return this.ToActionResult(await sender.Send(new CreateOrderCommand(
             User.GetUserId(),
             request.AddressId,
             request.ShippingRateId,
@@ -66,6 +67,43 @@ public sealed class OrdersController(ISender sender) : ControllerBase
             request.ShippingDistrictId,
             request.CouponId,
             request.ExpectedOlvaShippingCost), cancellationToken));
+    }
+
+    [Authorize(Roles = ApiRoles.Customer)]
+    [HttpPost("izipay")]
+    public async Task<IActionResult> CreateIzipayCheckout(CreateOrderRequest request, CancellationToken cancellationToken)
+    {
+        if (!request.IzipayPaymentMethodId.HasValue || request.IzipayCustomer is null)
+        {
+            return BadRequest(new { message = "Izipay payment method and customer details are required." });
+        }
+
+        if (request.AddressId.HasValue)
+        {
+            var address = await sender.Send(new GetAddressByIdQuery(request.AddressId.Value), cancellationToken);
+            if (address.IsFailure)
+            {
+                return this.ToActionResult(address);
+            }
+
+            if (address.Value.UserId != User.GetUserId())
+            {
+                return Forbid();
+            }
+        }
+
+        return this.ToActionResult(await sender.Send(new CreateOrderCommand(
+            User.GetUserId(),
+            request.AddressId,
+            request.ShippingRateId,
+            request.ShippingAgencyId,
+            request.ShippingDepartmentId,
+            request.ShippingProvinceId,
+            request.ShippingDistrictId,
+            request.CouponId,
+            request.ExpectedOlvaShippingCost,
+            request.IzipayPaymentMethodId,
+            request.IzipayCustomer), cancellationToken));
     }
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
@@ -112,5 +150,5 @@ public sealed class OrderStatusHistoryController(ISender sender) : ControllerBas
         => this.ToActionResult(await sender.Send(new GetOrderStatusHistoryQuery(orderId), cancellationToken));
 }
 
-public sealed record CreateOrderRequest(Guid? AddressId, Guid? ShippingRateId, Guid? ShippingAgencyId = null, Guid? ShippingDepartmentId = null, Guid? ShippingProvinceId = null, Guid? ShippingDistrictId = null, Guid? CouponId = null, decimal? ExpectedOlvaShippingCost = null);
+public sealed record CreateOrderRequest(Guid? AddressId, Guid? ShippingRateId, Guid? ShippingAgencyId = null, Guid? ShippingDepartmentId = null, Guid? ShippingProvinceId = null, Guid? ShippingDistrictId = null, Guid? CouponId = null, decimal? ExpectedOlvaShippingCost = null, Guid? IzipayPaymentMethodId = null, IzipayCustomerDetails? IzipayCustomer = null);
 public sealed record ChangeOrderStatusRequest(OrderStatus Status, string? Observation);

@@ -30,6 +30,7 @@ public sealed class User : Entity
     public EmailAddress Email { get; private set; } = null!;
     public string? PasswordHash { get; private set; }
     public string? GoogleSubject { get; private set; }
+    public string AvatarId { get; private set; } = "avatar_01";
     public UserStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
@@ -172,6 +173,23 @@ public sealed class User : Entity
         MaternalSurname = string.IsNullOrWhiteSpace(maternalSurname) ? null : maternalSurname.Trim();
         Phone = phone;
         Email = email;
+        UpdatedAt = DateTimeOffset.UtcNow;
+        AddDomainEvent(new UserUpdatedEvent(Id));
+    }
+
+    public static bool IsSupportedAvatarId(string? avatarId)
+    {
+        return Enumerable.Range(1, 24).Any(index => avatarId == $"avatar_{index:00}");
+    }
+
+    public void ChangeAvatar(string avatarId)
+    {
+        if (!IsSupportedAvatarId(avatarId))
+        {
+            throw new ArgumentException("The selected avatar is not supported.", nameof(avatarId));
+        }
+
+        AvatarId = avatarId;
         UpdatedAt = DateTimeOffset.UtcNow;
         AddDomainEvent(new UserUpdatedEvent(Id));
     }

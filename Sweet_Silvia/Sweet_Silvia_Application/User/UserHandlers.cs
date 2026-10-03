@@ -133,6 +133,30 @@ internal sealed class UpdateUserProfileCommandHandler(
     }
 }
 
+internal sealed class UpdateUserAvatarCommandHandler(
+    IRepository<UserEntity> users,
+    IUnitOfWork unitOfWork)
+    : ICommandHandler<UpdateUserAvatarCommand, UserResponse>
+{
+    public async Task<Result<UserResponse>> Handle(UpdateUserAvatarCommand request, CancellationToken cancellationToken)
+    {
+        var user = await users.GetByIdAsync(request.UserId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure<UserResponse>(ApplicationErrors.NotFound("User", request.UserId));
+        }
+
+        if (!UserEntity.IsSupportedAvatarId(request.AvatarId))
+        {
+            return Result.Failure<UserResponse>(ApplicationErrors.Validation("User.AvatarInvalid", "The selected avatar is not supported."));
+        }
+
+        user.ChangeAvatar(request.AvatarId);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return UserMappings.ToResponse(user);
+    }
+}
+
 internal sealed class BlockUserCommandHandler(
     IRepository<UserEntity> users,
     IRefreshTokenRepository refreshTokens,
@@ -485,6 +509,7 @@ internal static class UserMappings
             user.Phone?.Value,
             user.Email.Value,
             user.Status,
-            user.CreatedAt);
+            user.CreatedAt,
+            user.AvatarId);
     }
 }

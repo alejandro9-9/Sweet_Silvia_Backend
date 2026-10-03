@@ -15,3 +15,5 @@ public sealed record DeleteProductImageCommand(Guid Id) : ICommand;
 public sealed record GetProductImageByIdQuery(Guid Id) : IQuery<ProductImageResponse>;
 
 public sealed record GetProductImagesByProductQuery(Guid ProductId) : IQuery<List<ProductImageResponse>>;
+
+public sealed record GetProductImagesByProductsQuery(IReadOnlyCollection<Guid> ProductIds) : IQuery<List<ProductImageResponse>>;

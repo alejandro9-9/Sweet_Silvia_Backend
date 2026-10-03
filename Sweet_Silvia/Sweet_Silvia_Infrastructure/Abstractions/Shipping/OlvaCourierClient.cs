@@ -7,7 +7,9 @@ using Sweet_Silvia_Domain.Abstractions;
 
 namespace Sweet_Silvia_Infrastructure.Abstractions.Shipping;
 
-internal sealed class OlvaCourierClient(HttpClient httpClient, OlvaOptions options) : IOlvaCourierClient
+internal sealed class OlvaCourierClient(
+    HttpClient httpClient,
+    OlvaOptions options) : IOlvaCourierClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -90,6 +92,12 @@ internal sealed class OlvaCourierClient(HttpClient httpClient, OlvaOptions optio
             return Task.FromResult(Result.Failure<OlvaQuoteResponse>(new Error("Olva.PackageDimensionsRequired", "Length, width and height are required for packages.")));
         }
 
+        if (options.UseLocalQuoteEstimateWhenUnconfigured &&
+            (string.IsNullOrWhiteSpace(options.ApiKey) || options.ApiKey.Contains("PEGA_AQUI", StringComparison.OrdinalIgnoreCase)))
+        {
+            return Task.FromResult(CreateLocalQuoteEstimate(request));
+        }
+
         return PostRawDataAsync("quotes", new
         {
             origin = request.Origin.Trim(),
@@ -102,6 +110,23 @@ internal sealed class OlvaCourierClient(HttpClient httpClient, OlvaOptions optio
             width = request.Width,
             height = request.Height
         }, cancellationToken);
+    }
+
+    private static Result<OlvaQuoteResponse> CreateLocalQuoteEstimate(OlvaQuoteRequest request)
+    {
+        var volumeCm3 = (request.Length ?? 0m) * (request.Width ?? 0m) * (request.Height ?? 0m);
+        var volumetricWeightKg = volumeCm3 / 6000m;
+        var chargeableWeightKg = Math.Max(request.Weight ?? 0m, volumetricWeightKg);
+        var extraWeightSurcharge = Math.Ceiling(Math.Max(0m, chargeableWeightKg - 1m)) * 4m;
+        var bulkyPackageSurcharge = volumeCm3 > 45000m ? 8m : 0m;
+        var cost = 18m + extraWeightSurcharge + bulkyPackageSurcharge;
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            cost,
+            isLocalEstimate = true
+        }));
+
+        return Result.Success(new OlvaQuoteResponse(document.RootElement.Clone()));
     }
 
     private static bool IsUbigeo(string? value)

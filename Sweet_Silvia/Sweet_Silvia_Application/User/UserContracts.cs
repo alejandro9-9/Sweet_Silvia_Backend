@@ -3,11 +3,13 @@ using Sweet_Silvia_Domain.User;
 
 namespace Sweet_Silvia_Application.User;
 
-public sealed record UserResponse(Guid Id, Guid RoleId, string Name, string PaternalSurname, string? MaternalSurname, string? Phone, string Email, UserStatus Status, DateTimeOffset CreatedAt);
+public sealed record UserResponse(Guid Id, Guid RoleId, string Name, string PaternalSurname, string? MaternalSurname, string? Phone, string Email, UserStatus Status, DateTimeOffset CreatedAt, string AvatarId);
 
 public sealed record CreateUserCommand(Guid RoleId, string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email, string Password) : ICommand<Guid>;
 
 public sealed record UpdateUserProfileCommand(Guid UserId, string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email) : ICommand<UserResponse>;
+
+public sealed record UpdateUserAvatarCommand(Guid UserId, string AvatarId) : ICommand<UserResponse>;
 
 public sealed record ChangeUserRoleCommand(Guid UserId, Guid RoleId) : ICommand;
 

@@ -68,7 +68,8 @@ public sealed record OlvaCheckoutQuoteResponse(
     decimal ChargeableWeightKg,
     decimal LengthCm,
     decimal WidthCm,
-    decimal HeightCm);
+    decimal HeightCm,
+    bool IsLocalEstimate = false);
 
 public sealed record OlvaTrackingLocationResponse(string? Agency, string? Department);
 

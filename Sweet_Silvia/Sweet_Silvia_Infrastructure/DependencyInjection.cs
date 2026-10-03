@@ -10,7 +10,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Sweet_Silvia_Application.Abstractions.Audit;
+using Sweet_Silvia_Application.Abstractions.Coupons;
 using Sweet_Silvia_Application.Abstractions.Email;
+using Sweet_Silvia_Application.Abstractions.Orders;
 using Sweet_Silvia_Application.Abstractions.Payments;
 using Sweet_Silvia_Application.Abstractions.Security;
 using Sweet_Silvia_Application.Abstractions.Shipping;
@@ -20,6 +22,7 @@ using Sweet_Silvia_Domain.Abstractions;
 using Sweet_Silvia_Domain.RefreshToken;
 using Sweet_Silvia_Domain.User;
 using Sweet_Silvia_Infrastructure.Abstractions.Audit;
+using Sweet_Silvia_Infrastructure.Abstractions.Coupons;
 using Sweet_Silvia_Infrastructure.Abstractions.Email;
 using Sweet_Silvia_Infrastructure.Abstractions.Orders;
 using Sweet_Silvia_Infrastructure.Abstractions.Payments;
@@ -44,6 +47,14 @@ public static class DependencyInjection
         var emailDeliveryOptions = configuration.GetSection("Email").Get<EmailDeliveryOptions>() ?? new EmailDeliveryOptions();
         var googleAuthOptions = configuration.GetSection("Google").Get<GoogleAuthOptions>() ?? new GoogleAuthOptions();
         var olvaOptions = configuration.GetSection("Olva").Get<OlvaOptions>() ?? new OlvaOptions();
+        if (!environment.IsDevelopment() && olvaOptions.UseLocalQuoteEstimateWhenUnconfigured)
+        {
+            olvaOptions = new OlvaOptions
+            {
+                BaseUrl = olvaOptions.BaseUrl,
+                ApiKey = olvaOptions.ApiKey
+            };
+        }
         var izipayOptions = configuration.GetSection("Izipay").Get<IzipayOptions>() ?? new IzipayOptions();
         var fileStorageOptions = configuration.GetSection("FileStorage").Get<FileStorageOptions>() ?? new FileStorageOptions();
         var orderExpirationOptions = configuration.GetSection("Orders").Get<OrderExpirationOptions>() ?? new OrderExpirationOptions();
@@ -66,6 +77,8 @@ public static class DependencyInjection
             ConfigureDbContext(options, connectionString));
 
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<ApplicationDbContext>());
+        services.AddScoped<IUserCheckoutLock, PostgresUserCheckoutLock>();
+        services.AddScoped<ICouponUsageLock, PostgresCouponUsageLock>();
         services.AddScoped(typeof(IRepository<>), typeof(EntityRepository<>));
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddHostedService<RefreshTokenCleanupService>();
@@ -271,16 +284,15 @@ public static class DependencyInjection
             return;
         }
 
-        var apiKey = string.IsNullOrWhiteSpace(options.ApiKey) ? options.PublicKey : options.ApiKey;
-        if (!HasProductionValue(options.MerchantCode) ||
-            !HasProductionValue(apiKey) ||
-            !HasProductionValue(options.HashKey) ||
+        if (!HasProductionValue(options.ShopId) ||
+            !HasProductionValue(options.Password) ||
+            !HasProductionValue(options.PublicKey) ||
             !IsHttpsUrl(options.BaseUrl) ||
-            !IsPublicHttpsUrl(options.NotificationUrl) ||
-            !IsPublicHttpsUrl(options.TermsAndConditionsUrl))
+            !HasProductionValue(options.PaymentEndpoint) ||
+            !IsPublicHttpsUrl(options.NotificationUrl))
         {
             throw new InvalidOperationException(
-                "Izipay configuration is invalid. Configure the merchant code, payment API key, hash key and public HTTPS URLs before enabling it.");
+                "Izipay configuration is invalid. Configure the shop id, REST password, public key and public HTTPS notification URL before enabling it.");
         }
 
         if (!string.Equals(options.Environment, "Sandbox", StringComparison.OrdinalIgnoreCase) &&

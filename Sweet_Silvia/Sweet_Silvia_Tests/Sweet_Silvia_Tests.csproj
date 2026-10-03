@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Sweet_Silvia_Application\Sweet_Silvia_Application.csproj" />
     <ProjectReference Include="..\Sweet_Silvia_Domain\Sweet_Silvia_Domain.csproj" />
+    <ProjectReference Include="..\Sweet_Silvia_Infrastructure\Sweet_Silvia_Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

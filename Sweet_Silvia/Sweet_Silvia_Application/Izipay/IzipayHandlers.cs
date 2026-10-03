@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Sweet_Silvia_Application.Abstractions.Messaging;
+using Sweet_Silvia_Application.Abstractions.Coupons;
 using Sweet_Silvia_Application.Abstractions.Payments;
 using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.Payment;
@@ -12,6 +13,8 @@ using Sweet_Silvia_Domain.Order;
 using Sweet_Silvia_Domain.Payment;
 using Sweet_Silvia_Domain.PaymentMethod;
 using Sweet_Silvia_Domain.StockMovement;
+using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
+using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
 using OrderItemEntity = Sweet_Silvia_Domain.OrderItem.OrderItem;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using StockMovementEntity = Sweet_Silvia_Domain.StockMovement.StockMovement;
@@ -21,166 +24,132 @@ using OrderEntity = Sweet_Silvia_Domain.Order.Order;
 
 namespace Sweet_Silvia_Application.Izipay;
 
-internal sealed class GenerateIzipayPaymentLinkCommandHandler(
+internal sealed class GenerateIzipayPaymentFormCommandHandler(
     IRepository<PaymentEntity> payments,
     IRepository<OrderEntity> orders,
     IRepository<PaymentMethodEntity> paymentMethods,
     IIzipayPaymentGateway izipayPaymentGateway,
     IUnitOfWork unitOfWork)
-    : ICommandHandler<GenerateIzipayPaymentLinkCommand, IzipayPaymentLinkResponse>
+    : ICommandHandler<GenerateIzipayPaymentFormCommand, IzipayPaymentFormResponse>
 {
-    private static readonly HashSet<string> AllowedPayMethods = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CARD",
-        "QR",
-        "YAPE_CODE",
-        "PAGO_PUSH"
-    };
-
-    public async Task<Result<IzipayPaymentLinkResponse>> Handle(GenerateIzipayPaymentLinkCommand request, CancellationToken cancellationToken)
+    public async Task<Result<IzipayPaymentFormResponse>> Handle(GenerateIzipayPaymentFormCommand request, CancellationToken cancellationToken)
     {
         var order = await orders.GetByIdAsync(request.OrderId, cancellationToken);
         if (order is null)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.NotFound("Order", request.OrderId));
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.NotFound("Order", request.OrderId));
         }
 
         var paymentMethod = await paymentMethods.GetByIdAsync(request.PaymentMethodId, cancellationToken);
         if (paymentMethod is null || !paymentMethod.IsActive)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.NotFound("PaymentMethod", request.PaymentMethodId));
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.NotFound("PaymentMethod", request.PaymentMethodId));
         }
 
         if (paymentMethod.Type != PaymentMethodType.Gateway || !paymentMethod.RequiresExternalIntegration)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.Conflict(
                 "PaymentMethod.InvalidGateway",
                 "The selected payment method is not configured as an external gateway."));
         }
 
         if (order.Status is not OrderStatus.PendingReceipt and not OrderStatus.ReceiptInReview)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.Conflict(
                 "Order.InvalidPaymentStatus",
-                "A payment link can only be generated for an order awaiting payment."));
+                "A payment form can only be generated for an order awaiting payment."));
         }
 
-        if (request.Billing is null)
+        var customerError = IzipayCustomerValidation.Validate(request.Customer);
+        if (customerError is not null)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
-                "Izipay.BillingRequired",
-                "Billing information is required to generate an Izipay payment link."));
-        }
-
-        var payMethod = string.IsNullOrWhiteSpace(request.PayMethod) ? "CARD" : request.PayMethod.Trim().ToUpperInvariant();
-        if (!AllowedPayMethods.Contains(payMethod))
-        {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
-                "Izipay.InvalidPayMethod",
-                "Izipay pay method should be CARD, QR, YAPE_CODE or PAGO_PUSH."));
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.Conflict("Izipay.InvalidCustomer", customerError));
         }
 
         var now = DateTimeOffset.UtcNow;
-        var pendingGatewayPayments = payments.Query()
+        var pendingPayments = payments.Query()
             .Where(payment => payment.OrderId == order.Id && payment.Status == PaymentStatus.PendingGateway)
             .ToList();
 
-        var expiredPayments = pendingGatewayPayments
+        var expiredPayments = pendingPayments
             .Where(payment => payment.GatewayExpiresAt.HasValue && payment.GatewayExpiresAt.Value <= now)
             .ToList();
-
         foreach (var expiredPayment in expiredPayments)
         {
-            expiredPayment.ExpireGateway();
+            expiredPayment.ExpireGateway("Izipay payment session expired.");
         }
-
         if (expiredPayments.Count > 0)
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        if (payments.Query().Any(payment =>
+        var activePayments = payments.Query()
+            .Where(payment =>
                 payment.OrderId == order.Id &&
                 payment.Status == PaymentStatus.PendingGateway &&
-                (!payment.GatewayExpiresAt.HasValue || payment.GatewayExpiresAt.Value > now)))
+                (!payment.GatewayExpiresAt.HasValue || payment.GatewayExpiresAt.Value > now))
+            .ToList();
+        if (activePayments.Count > 1)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.Conflict(
+                "Payment.MultipleActiveGatewayPayments",
+                "Este pedido tiene varios intentos Izipay activos y requiere revision antes de continuar."));
+        }
+
+        var activePayment = activePayments.SingleOrDefault();
+        if (activePayment is not null && !request.ReplaceActivePayment)
+        {
+            return Result.Failure<IzipayPaymentFormResponse>(ApplicationErrors.Conflict(
                 "Payment.ActiveGatewayPaymentExists",
-                "This order already has an active Izipay payment."));
+                "Este pedido ya tiene un pago Izipay activo. Espera la confirmacion o vuelve a intentarlo cuando figure como rechazado."));
         }
 
-        var contactError = IzipayValidation.ValidateContact(request.Billing);
-        if (contactError is not null)
-        {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict("Izipay.InvalidContact", contactError));
-        }
-
-        var shippingContact = request.Shipping ?? request.Billing;
-        contactError = IzipayValidation.ValidateContact(shippingContact);
-        if (contactError is not null)
-        {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict("Izipay.InvalidContact", contactError));
-        }
-
-        var expirationDate = IzipayValidation.NormalizeExpiration(request.ExpirationDate ?? DateTimeOffset.UtcNow.AddHours(24));
-        if (expirationDate <= DateTimeOffset.UtcNow || expirationDate > DateTimeOffset.UtcNow.AddDays(180))
-        {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
-                "Izipay.InvalidExpiration",
-                "Izipay payment link expiration should be between now and 180 days."));
-        }
-
-        var transactionId = Guid.NewGuid().ToString("N");
-        var gatewayResult = await izipayPaymentGateway.GeneratePaymentLinkAsync(
-            new IzipayPaymentLinkGatewayRequest(
-                transactionId,
-                string.IsNullOrWhiteSpace(request.ProductDescription)
-                    ? $"Pedido Sweet Silvia {order.Id:N}"
-                    : request.ProductDescription.Trim(),
+        var orderReference = activePayment?.GatewayTransactionId ?? Guid.NewGuid().ToString("N");
+        var gatewayResult = await izipayPaymentGateway.CreatePaymentFormAsync(
+            new IzipayPaymentFormGatewayRequest(
+                orderReference,
                 order.Total.Amount,
                 order.Total.Currency,
-                expirationDate,
-                "INDIVIDUAL",
-                payMethod,
-                request.Billing,
-                shippingContact),
+                request.Customer),
             cancellationToken);
 
         if (gatewayResult.IsFailure)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(gatewayResult.Error);
+            return Result.Failure<IzipayPaymentFormResponse>(gatewayResult.Error);
         }
 
-        if (!decimal.TryParse(gatewayResult.Value.Amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var gatewayAmount) ||
-            gatewayAmount != order.Total.Amount ||
-            !string.Equals(gatewayResult.Value.Currency, order.Total.Currency, StringComparison.OrdinalIgnoreCase))
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(24);
+        var payment = activePayment;
+        if (payment is null)
         {
-            return Result.Failure<IzipayPaymentLinkResponse>(ApplicationErrors.Conflict(
-                "Izipay.AmountMismatch",
-                "Izipay returned an amount or currency different from the order."));
+            payment = PaymentEntity.CreateGatewayPending(
+                order.Id,
+                paymentMethod.Id,
+                order.Total,
+                orderReference,
+                orderReference,
+                expiresAt,
+                "FORM_TOKEN_CREATED");
+            payments.Add(payment);
+        }
+        else
+        {
+            payment.RefreshGatewaySession(expiresAt, "FORM_TOKEN_REFRESHED");
         }
 
-        var payment = PaymentEntity.CreateGatewayPending(
-            order.Id,
-            paymentMethod.Id,
-            order.Total,
-            gatewayResult.Value.TransactionId,
-            gatewayResult.Value.PaymentLinkId,
-            expirationDate,
-            gatewayResult.Value.State);
-
-        payments.Add(payment);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new IzipayPaymentLinkResponse(
+        var amountMinorUnits = decimal.ToInt64(order.Total.Amount * 100m);
+        return new IzipayPaymentFormResponse(
             payment.Id,
-            gatewayResult.Value.TransactionId,
-            gatewayResult.Value.PaymentLinkId,
-            gatewayResult.Value.PaymentUrl,
-            gatewayResult.Value.Amount,
-            gatewayResult.Value.Currency,
-            gatewayResult.Value.State);
+            order.Id,
+            orderReference,
+            gatewayResult.Value.FormToken,
+            gatewayResult.Value.PublicKey,
+            amountMinorUnits,
+            order.Total.Currency);
     }
+
 }
 
 internal sealed class ProcessIzipayNotificationCommandHandler(
@@ -188,145 +157,122 @@ internal sealed class ProcessIzipayNotificationCommandHandler(
     IRepository<PaymentEntity> payments,
     IRepository<OrderEntity> orders,
     IRepository<OrderItemEntity> orderItems,
+    IRepository<CartEntity> carts,
+    IRepository<CartItemEntity> cartItems,
     IRepository<ProductVariantEntity> variants,
     IRepository<StockMovementEntity> stockMovements,
     IRepository<Sweet_Silvia_Domain.OrderStatusHistory.OrderStatusHistory> histories,
     IRepository<CouponEntity> coupons,
     IRepository<CouponUsageEntity> couponUsages,
+    ICouponUsageLock couponUsageLock,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ProcessIzipayNotificationCommand, IzipayNotificationResult>
 {
     public async Task<Result<IzipayNotificationResult>> Handle(ProcessIzipayNotificationCommand request, CancellationToken cancellationToken)
     {
-        var headerTransactionId = request.HeaderTransactionId?.Trim();
-        if (string.IsNullOrWhiteSpace(headerTransactionId))
-        {
-            return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                "Izipay.TransactionIdMissing",
-                "Izipay transactionId header is required."));
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.BodyTransactionId) &&
-            !string.Equals(headerTransactionId, request.BodyTransactionId.Trim(), StringComparison.Ordinal))
-        {
-            return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                "Izipay.TransactionIdMismatch",
-                "Izipay transactionId header and body do not match."));
-        }
-
-        var isCommunicationError = string.Equals(request.Code, "021", StringComparison.OrdinalIgnoreCase) ||
-                                   string.Equals(request.Code, "COMMUNICATION_ERROR", StringComparison.OrdinalIgnoreCase);
-        SignedIzipayNotification? signedNotification = null;
-        if (!isCommunicationError &&
-            (string.IsNullOrWhiteSpace(request.PayloadHttp) ||
-             string.IsNullOrWhiteSpace(request.Signature) ||
-             !signatureValidator.IsValid(request.PayloadHttp, request.Signature)))
+        if (!string.Equals(request.HashAlgorithm, "sha256_hmac", StringComparison.OrdinalIgnoreCase) ||
+            !(request.IsServerNotification
+                ? signatureValidator.IsNotificationValid(request.Answer, request.Signature)
+                : signatureValidator.IsClientConfirmationValid(request.Answer, request.Signature)))
         {
             return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
                 "Izipay.InvalidSignature",
                 "Izipay notification signature is invalid."));
         }
 
-        if (!isCommunicationError)
+        JsonDocument notification;
+        try
         {
-            try
-            {
-                signedNotification = JsonSerializer.Deserialize<SignedIzipayNotification>(request.PayloadHttp!, IzipayNotificationJsonOptions.Instance);
-            }
-            catch (JsonException)
-            {
-                signedNotification = null;
-            }
+            notification = JsonDocument.Parse(request.Answer);
+        }
+        catch (JsonException)
+        {
+            return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
+                "Izipay.InvalidPayload",
+                "Izipay notification answer is not valid JSON."));
+        }
 
-            if (signedNotification is null || string.IsNullOrWhiteSpace(signedNotification.Code))
+        using (notification)
+        {
+            var root = notification.RootElement;
+            var shopId = GetString(root, "shopId");
+            var orderDetails = GetProperty(root, "orderDetails");
+            var orderReference = GetString(orderDetails, "orderId");
+            var orderStatus = GetString(root, "orderStatus");
+            var orderCycle = GetString(root, "orderCycle");
+
+            var shopMatches = string.Equals(shopId, request.ExpectedShopId, StringComparison.Ordinal);
+            var isAuthenticatedClientConfirmation = request.ExpectedPaymentId.HasValue && string.IsNullOrWhiteSpace(shopId);
+            if ((!shopMatches && !isAuthenticatedClientConfirmation) ||
+                string.IsNullOrWhiteSpace(orderReference) ||
+                string.IsNullOrWhiteSpace(orderStatus))
             {
                 return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
                     "Izipay.InvalidPayload",
-                    "Izipay signed payload could not be read."));
+                    "Izipay notification does not match this shop or has no order reference."));
             }
 
-            if (!string.Equals(signedNotification.TransactionId?.Trim(), headerTransactionId, StringComparison.Ordinal))
+            var payment = payments.Query().FirstOrDefault(item => item.GatewayTransactionId == orderReference);
+            if (payment is null)
+            {
+                return Result.Failure<IzipayNotificationResult>(ApplicationErrors.NotFound("Payment"));
+            }
+
+            if (request.ExpectedPaymentId.HasValue && payment.Id != request.ExpectedPaymentId.Value)
             {
                 return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                    "Izipay.TransactionIdMismatch",
-                    "Izipay signed payload and transactionId header do not match."));
+                    "Izipay.PaymentMismatch",
+                    "Izipay response does not match the selected payment."));
             }
 
-            if (!string.Equals(signedNotification.Code.Trim(), request.Code.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (payment.Status is PaymentStatus.Approved or PaymentStatus.Rejected)
+            {
+                return new IzipayNotificationResult(payment.Id, payment.Status);
+            }
+
+            if (payment.Status != PaymentStatus.PendingGateway)
             {
                 return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                    "Izipay.CodeMismatch",
-                    "Izipay notification code is not consistent with its signed payload."));
+                    "Izipay.PaymentNotPending",
+                    "The payment is no longer pending gateway confirmation."));
             }
-        }
 
-        var payment = payments.Query()
-            .FirstOrDefault(item => item.GatewayTransactionId == headerTransactionId);
-        if (payment is null)
-        {
-            return Result.Failure<IzipayNotificationResult>(ApplicationErrors.NotFound("Payment"));
-        }
-
-        if (payment.Status is PaymentStatus.Approved or PaymentStatus.Rejected)
-        {
-            return new IzipayNotificationResult(payment.Id, payment.Status);
-        }
-
-        if (payment.Status != PaymentStatus.PendingGateway)
-        {
-            return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                "Izipay.PaymentNotPending",
-                "The payment is no longer pending gateway confirmation."));
-        }
-
-        if (isCommunicationError)
-        {
-            return new IzipayNotificationResult(payment.Id, payment.Status);
-        }
-
-        var signedCode = signedNotification?.Code ?? request.Code;
-        var gatewayOrder = signedNotification?.Response?.Order?.FirstOrDefault();
-        if (!string.Equals(signedCode, "00", StringComparison.OrdinalIgnoreCase) &&
-            payment.GatewayExpiresAt.HasValue &&
-            payment.GatewayExpiresAt.Value <= DateTimeOffset.UtcNow)
-        {
-            payment.ExpireGateway();
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            return new IzipayNotificationResult(payment.Id, payment.Status);
-        }
-
-        if (string.Equals(signedCode, "00", StringComparison.OrdinalIgnoreCase))
-        {
-            if (gatewayOrder is null ||
-                !decimal.TryParse(gatewayOrder.Amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+            if (!string.Equals(orderStatus, "PAID", StringComparison.OrdinalIgnoreCase))
             {
-                return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                    "Izipay.InvalidAmount",
-                    "Izipay notification did not contain a valid amount."));
+                if (string.Equals(orderCycle, "CLOSED", StringComparison.OrdinalIgnoreCase))
+                {
+                    payment.RejectFromGateway($"Izipay payment finished with status {orderStatus}.");
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                }
+
+                return new IzipayNotificationResult(payment.Id, payment.Status);
             }
 
-            if (amount != payment.Amount.Amount ||
-                !string.Equals(gatewayOrder.Currency, payment.Amount.Currency, StringComparison.OrdinalIgnoreCase))
+            var reportedAmount = GetDecimal(orderDetails, "orderTotalAmount");
+            var reportedCurrency = GetString(orderDetails, "orderCurrency");
+            if (reportedAmount is null || reportedAmount.Value != payment.Amount.Amount * 100m ||
+                !string.Equals(reportedCurrency, payment.Amount.Currency, StringComparison.OrdinalIgnoreCase))
             {
                 return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
                     "Izipay.AmountMismatch",
-                    "Izipay notification amount does not match the payment amount."));
+                    "Izipay notification amount or currency does not match the payment."));
             }
 
-            if (!string.IsNullOrWhiteSpace(payment.TransactionCode) &&
-                !string.IsNullOrWhiteSpace(gatewayOrder.PaymentLinkId) &&
-                !string.Equals(payment.TransactionCode, gatewayOrder.PaymentLinkId, StringComparison.Ordinal))
+            var authorizationCode = GetAuthorizationCode(root);
+            var settlementOrder = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
+            if (settlementOrder is null)
             {
-                return Result.Failure<IzipayNotificationResult>(ApplicationErrors.Conflict(
-                    "Izipay.PaymentLinkMismatch",
-                    "Izipay notification does not belong to the stored payment link."));
+                return Result.Failure<IzipayNotificationResult>(ApplicationErrors.NotFound("Order", payment.OrderId));
             }
 
+            await using var couponLock = settlementOrder.CouponId is Guid couponId
+                ? await couponUsageLock.AcquireAsync(couponId, cancellationToken)
+                : null;
             var settlement = await PaymentSettlementService.Approve(
                 payment,
                 null,
-                gatewayOrder.CodeAuth,
-                $"Izipay payment approved ({signedCode}).",
+                authorizationCode,
+                "Izipay payment approved (PAID).",
                 false,
                 orders,
                 orderItems,
@@ -340,8 +286,6 @@ internal sealed class ProcessIzipayNotificationCommandHandler(
             {
                 if (settlement.Error.Code == "Stock.NotEnough")
                 {
-                    // Do not reject a gateway payment after Izipay approved it.
-                    // Keep it pending for reconciliation/refund instead.
                     payment.MarkGatewaySettlementPending(
                         "Izipay aprobo el pago, pero el stock requiere conciliacion manual: " + settlement.Error.Message);
                     await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -351,84 +295,95 @@ internal sealed class ProcessIzipayNotificationCommandHandler(
                 return Result.Failure<IzipayNotificationResult>(settlement.Error);
             }
 
+            var order = await orders.GetByIdAsync(payment.OrderId, cancellationToken);
+            var cart = order is null
+                ? null
+                : carts.Query().FirstOrDefault(item => item.UserId == order.UserId && item.IsActive);
+            if (cart is not null)
+            {
+                var purchasedQuantities = orderItems.Query()
+                    .Where(item => item.OrderId == payment.OrderId)
+                    .GroupBy(item => item.ProductVariantId)
+                    .Select(group => new
+                    {
+                        ProductVariantId = group.Key,
+                        Quantity = group.Sum(item => item.Quantity)
+                    })
+                    .ToList();
+
+                foreach (var purchased in purchasedQuantities)
+                {
+                    var cartItem = cartItems.Query().FirstOrDefault(item =>
+                        item.CartId == cart.Id && item.ProductVariantId == purchased.ProductVariantId);
+                    if (cartItem is null)
+                    {
+                        continue;
+                    }
+
+                    if (purchased.Quantity >= cartItem.Quantity)
+                    {
+                        cartItems.Remove(cartItem);
+                    }
+                    else
+                    {
+                        cartItem.DecreaseQuantity(purchased.Quantity);
+                    }
+                }
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return new IzipayNotificationResult(payment.Id, payment.Status);
         }
-
-        payment.RejectFromGateway($"Izipay payment rejected ({signedCode}): {signedNotification?.Message?.Trim() ?? request.Message?.Trim()}");
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new IzipayNotificationResult(payment.Id, payment.Status);
     }
 
-}
-
-internal sealed class SignedIzipayNotification
-{
-    public string? Code { get; set; }
-    public string? Message { get; set; }
-    public SignedIzipayResponse? Response { get; set; }
-    public string? TransactionId { get; set; }
-}
-
-internal sealed class SignedIzipayResponse
-{
-    public List<SignedIzipayOrder> Order { get; set; } = [];
-}
-
-internal sealed class SignedIzipayOrder
-{
-    public string? CodeAuth { get; set; }
-    public string? Currency { get; set; }
-    public string? Amount { get; set; }
-    public string? PaymentLinkId { get; set; }
-}
-
-internal static class IzipayNotificationJsonOptions
-{
-    public static readonly JsonSerializerOptions Instance = new(JsonSerializerDefaults.Web)
+    private static string? GetAuthorizationCode(JsonElement root)
     {
-        PropertyNameCaseInsensitive = true
-    };
-}
-
-internal static class IzipayValidation
-{
-    public static DateTimeOffset NormalizeExpiration(DateTimeOffset requested)
-    {
-        var utc = requested.ToUniversalTime();
-        var minute = utc.Minute < 30 ? 0 : 30;
-        var normalized = new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, minute, 0, TimeSpan.Zero);
-        return normalized <= utc ? normalized.AddMinutes(30) : normalized;
-    }
-
-    public static string? ValidateContact(IzipayPaymentLinkContact contact)
-    {
-        if (contact is null || contact.FirstName.Trim().Length is < 2 or > 100 || contact.LastName.Trim().Length is < 2 or > 100)
+        var transactions = GetProperty(root, "transactions");
+        if (transactions.ValueKind == JsonValueKind.Array && transactions.GetArrayLength() > 0)
         {
-            return "El nombre y apellido para Izipay deben tener entre 2 y 50 caracteres.";
-        }
-
-        if (contact.Email.Trim().Length is < 5 or > 254 || !contact.Email.Contains('@', StringComparison.Ordinal))
-        {
-            return "El correo para Izipay no es valido.";
-        }
-
-        if (contact.PhoneNumber.Trim().Length is < 7 or > 20 || contact.Street.Trim().Length is < 5 or > 200)
-        {
-            return "El telefono debe tener entre 7 y 15 caracteres y la direccion entre 5 y 25.";
-        }
-
-        if (contact.PostalCode.Trim().Length is < 3 or > 20 || contact.City.Trim().Length is < 3 or > 100 || contact.State.Trim().Length is < 3 or > 100)
-        {
-            return "Completa un codigo postal, ciudad y departamento validos para Izipay.";
-        }
-
-        if (string.Equals(contact.DocumentType.Trim(), "DNI", StringComparison.OrdinalIgnoreCase) &&
-            contact.Document.Trim().Length != 8)
-        {
-            return "El DNI debe tener 8 caracteres.";
+            var first = transactions[0];
+            var authorization = GetProperty(first, "authorizationResponse");
+            return GetString(authorization, "authorizationNumber") ?? GetString(first, "uuid");
         }
 
         return null;
+    }
+
+    private static decimal? GetDecimal(JsonElement element, string name)
+    {
+        var property = GetProperty(element, name);
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetDecimal(out var number))
+        {
+            return number;
+        }
+
+        return property.ValueKind == JsonValueKind.String &&
+               decimal.TryParse(property.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out number)
+            ? number
+            : null;
+    }
+
+    private static string? GetString(JsonElement element, string name)
+    {
+        var property = GetProperty(element, name);
+        return property.ValueKind == JsonValueKind.String ? property.GetString() : null;
+    }
+
+    private static JsonElement GetProperty(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return default;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return property.Value;
+            }
+        }
+
+        return default;
     }
 }

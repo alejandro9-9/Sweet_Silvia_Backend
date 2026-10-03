@@ -65,15 +65,14 @@ public sealed class PaymentMethodsController(ISender sender, IConfiguration conf
     {
         var options = configuration.GetSection("Izipay");
         var notificationUrl = options["NotificationUrl"];
-        var termsUrl = options["TermsAndConditionsUrl"];
 
         return bool.TryParse(options["Enabled"], out var enabled) &&
                enabled &&
-               HasConfiguredValue(options["MerchantCode"]) &&
-               (HasConfiguredValue(options["ApiKey"]) || HasConfiguredValue(options["PublicKey"])) &&
-               HasConfiguredValue(options["HashKey"]) &&
-               IsPublicHttpsUrl(notificationUrl) &&
-               IsPublicHttpsUrl(termsUrl);
+               HasConfiguredValue(options["ShopId"]) &&
+               HasConfiguredValue(options["Password"]) &&
+               HasConfiguredValue(options["HmacSha256Key"]) &&
+               HasConfiguredValue(options["PublicKey"]) &&
+               IsPublicHttpsUrl(notificationUrl);
     }
 
     private static bool HasConfiguredValue(string? value)
@@ -139,8 +138,8 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
     }
 
     [Authorize(Roles = ApiRoles.Customer)]
-    [HttpPost("izipay/payment-link")]
-    public async Task<IActionResult> GenerateIzipayPaymentLink(GenerateIzipayPaymentLinkRequest request, CancellationToken cancellationToken)
+    [HttpPost("izipay/form-token")]
+    public async Task<IActionResult> GenerateIzipayPaymentForm(GenerateIzipayPaymentFormRequest request, CancellationToken cancellationToken)
     {
         if (!IsIzipayReady())
         {
@@ -158,14 +157,44 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
         }
 
         return this.ToActionResult(await sender.Send(
-            new GenerateIzipayPaymentLinkCommand(
+            new GenerateIzipayPaymentFormCommand(
                 request.OrderId,
                 request.PaymentMethodId,
-                request.ProductDescription,
-                request.ExpirationDate,
-                request.PayMethod,
-                request.Billing,
-                request.Shipping),
+                request.Customer,
+                request.ReplaceActivePayment),
+            cancellationToken));
+    }
+
+    [Authorize(Roles = ApiRoles.Customer)]
+    [HttpPost("izipay/confirm")]
+    public async Task<IActionResult> ConfirmIzipayPayment(
+        ConfirmIzipayPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!IsIzipayReady())
+        {
+            return Conflict(new { code = "Izipay.NotAvailable", message = "Izipay no esta disponible." });
+        }
+
+        var payment = await sender.Send(new GetPaymentByIdQuery(request.PaymentId), cancellationToken);
+        if (payment.IsFailure)
+        {
+            return this.ToActionResult(payment);
+        }
+
+        var access = await EnsureCanAccessOrder(payment.Value.OrderId, cancellationToken);
+        if (access is not null)
+        {
+            return access;
+        }
+
+        return this.ToActionResult(await sender.Send(
+            new ProcessIzipayNotificationCommand(
+                request.Answer,
+                request.Signature,
+                "sha256_hmac",
+                configuration["Izipay:ShopId"] ?? string.Empty,
+                request.PaymentId),
             cancellationToken));
     }
 
@@ -174,11 +203,11 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
         var options = configuration.GetSection("Izipay");
         return bool.TryParse(options["Enabled"], out var enabled) &&
                enabled &&
-               HasConfiguredValue(options["MerchantCode"]) &&
-               (HasConfiguredValue(options["ApiKey"]) || HasConfiguredValue(options["PublicKey"])) &&
-               HasConfiguredValue(options["HashKey"]) &&
-               IsPublicHttpsUrl(options["NotificationUrl"]) &&
-               IsPublicHttpsUrl(options["TermsAndConditionsUrl"]);
+               HasConfiguredValue(options["ShopId"]) &&
+               HasConfiguredValue(options["Password"]) &&
+               HasConfiguredValue(options["HmacSha256Key"]) &&
+               HasConfiguredValue(options["PublicKey"]) &&
+               IsPublicHttpsUrl(options["NotificationUrl"]);
     }
 
     private static bool HasConfiguredValue(string? value)
@@ -196,9 +225,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
     [AllowAnonymous]
     [HttpPost("izipay/notifications")]
     public async Task<IActionResult> ReceiveIzipayNotification(
-        [FromHeader(Name = "transactionId")] string? transactionId,
-        [FromHeader(Name = "Signature")] string? signatureHeader,
-        IzipayNotificationRequest request,
+        [FromForm] IzipayNotificationRequest request,
         CancellationToken cancellationToken)
     {
         if (!IsIzipayReady())
@@ -212,15 +239,11 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
 
         return this.ToActionResult(await sender.Send(
             new ProcessIzipayNotificationCommand(
-                transactionId ?? string.Empty,
-                request.TransactionId,
-                request.Code,
-                request.Message,
-                request.PayloadHttp,
-                string.IsNullOrWhiteSpace(signatureHeader) ? request.Signature : signatureHeader,
-                request.Response is null
-                    ? null
-                    : new IzipayNotificationResponseData(request.Response.Order)),
+                request.Answer,
+                request.Signature,
+                request.HashAlgorithm,
+                configuration["Izipay:ShopId"] ?? string.Empty,
+                IsServerNotification: true),
             cancellationToken));
     }
 
@@ -455,31 +478,27 @@ public sealed class PaymentReviewsController(ISender sender) : ControllerBase
 public sealed record CreatePaymentMethodRequest(string Name, PaymentMethodType Type, bool RequiresManualVerification, bool RequiresExternalIntegration);
 public sealed record UpdatePaymentMethodRequest(string Name, PaymentMethodType Type, bool RequiresManualVerification, bool RequiresExternalIntegration);
 public sealed record CreatePaymentRequest(Guid OrderId, Guid PaymentMethodId, decimal Amount, string Currency = "PEN");
-public sealed class GenerateIzipayPaymentLinkRequest
+public sealed class GenerateIzipayPaymentFormRequest
 {
     public Guid OrderId { get; init; }
     public Guid PaymentMethodId { get; init; }
-    public string? ProductDescription { get; init; }
-    public DateTimeOffset? ExpirationDate { get; init; }
-    public string PayMethod { get; init; } = "CARD";
-    public IzipayPaymentLinkContact Billing { get; init; } = null!;
-    public IzipayPaymentLinkContact? Shipping { get; init; }
+    public IzipayCustomerDetails Customer { get; init; } = null!;
+    public bool ReplaceActivePayment { get; init; }
 }
 
 public sealed class IzipayNotificationRequest
 {
-    public string Code { get; init; } = string.Empty;
-    public string? Message { get; init; }
-    public IzipayNotificationResponseRequest? Response { get; init; }
-    public string? PayloadHttp { get; init; }
-    public string? Signature { get; init; }
-    public string? TransactionId { get; init; }
+    [FromForm(Name = "kr-answer")]
+    public string Answer { get; init; } = string.Empty;
+
+    [FromForm(Name = "kr-hash")]
+    public string Signature { get; init; } = string.Empty;
+
+    [FromForm(Name = "kr-hash-algorithm")]
+    public string HashAlgorithm { get; init; } = string.Empty;
 }
 
-public sealed class IzipayNotificationResponseRequest
-{
-    public List<IzipayNotificationOrder> Order { get; init; } = [];
-}
+public sealed record ConfirmIzipayPaymentRequest(Guid PaymentId, string Answer, string Signature);
 
 public sealed record ReviewPaymentRequest(Guid PaymentId, PaymentReviewResult Result, string? Observation);
 

@@ -22,13 +22,24 @@ public sealed class GlobalActionLoggingFilter(
         "secret",
         "apikey",
         "api_key",
-        "authorization"
+        "authorization",
+        "answer",
+        "signature"
     ];
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         logger.LogInformation("Executing action {ActionName}", context.ActionDescriptor.DisplayName);
-        var oldValues = await CaptureOldValuesAsync(context);
+        Dictionary<string, object?>? oldValues = null;
+        try
+        {
+            oldValues = await CaptureOldValuesAsync(context);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not capture previous values for action {ActionName}", context.ActionDescriptor.DisplayName);
+        }
+
         var result = await next();
         logger.LogInformation(
             "Executed action {ActionName} with status {StatusCode}",

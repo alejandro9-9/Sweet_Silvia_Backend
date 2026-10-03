@@ -46,7 +46,7 @@ public sealed class Payment : Entity
         return result;
     }
 
-    public static Payment CreateGatewayPending(Guid orderId, Guid paymentMethodId, Money amount, string gatewayTransactionId, string paymentLinkId, DateTimeOffset gatewayExpiresAt, string? gatewayState)
+    public static Payment CreateGatewayPending(Guid orderId, Guid paymentMethodId, Money amount, string gatewayTransactionId, string gatewayReference, DateTimeOffset gatewayExpiresAt, string? gatewayState)
     {
         ValidateCreation(orderId, paymentMethodId, amount);
 
@@ -55,9 +55,9 @@ public sealed class Payment : Entity
             throw new ArgumentException("Gateway transaction id is required.", nameof(gatewayTransactionId));
         }
 
-        if (string.IsNullOrWhiteSpace(paymentLinkId))
+        if (string.IsNullOrWhiteSpace(gatewayReference))
         {
-            throw new ArgumentException("Payment link id is required.", nameof(paymentLinkId));
+            throw new ArgumentException("Gateway reference is required.", nameof(gatewayReference));
         }
 
         if (gatewayExpiresAt <= DateTimeOffset.UtcNow)
@@ -72,7 +72,7 @@ public sealed class Payment : Entity
             PaymentStatus.PendingGateway,
             amount,
             amount.Currency,
-            paymentLinkId.Trim(),
+            gatewayReference.Trim(),
             string.IsNullOrWhiteSpace(gatewayState) ? null : gatewayState.Trim(),
             gatewayTransactionId.Trim(),
             DateTimeOffset.UtcNow);
@@ -228,6 +228,17 @@ public sealed class Payment : Entity
         ReviewedAt = DateTimeOffset.UtcNow;
         Observation = observation?.Trim() ?? "Payment link expired.";
         AddDomainEvent(new PaymentRejectedEvent(Id));
+    }
+
+    public void RefreshGatewaySession(DateTimeOffset expiresAt, string? gatewayState)
+    {
+        if (Status != PaymentStatus.PendingGateway || expiresAt <= DateTimeOffset.UtcNow)
+        {
+            throw new InvalidOperationException("Only an active gateway payment can refresh its session.");
+        }
+
+        GatewayExpiresAt = expiresAt;
+        AuthorizationCode = string.IsNullOrWhiteSpace(gatewayState) ? AuthorizationCode : gatewayState.Trim();
     }
 
     private static void ValidateCreation(Guid orderId, Guid paymentMethodId, Money amount)

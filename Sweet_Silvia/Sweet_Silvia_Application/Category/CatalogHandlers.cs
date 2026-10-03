@@ -617,6 +617,29 @@ internal sealed class GetProductImagesByProductQueryHandler(
     }
 }
 
+internal sealed class GetProductImagesByProductsQueryHandler(
+    IRepository<ProductImageEntity> images,
+    IRepository<ProductEntity> products)
+    : IQueryHandler<GetProductImagesByProductsQuery, List<ProductImageResponse>>
+{
+    public Task<Result<List<ProductImageResponse>>> Handle(GetProductImagesByProductsQuery request, CancellationToken cancellationToken)
+    {
+        var activeProductIds = products.Query()
+            .Where(product => request.ProductIds.Contains(product.Id) && product.IsActive)
+            .Select(product => product.Id)
+            .ToList();
+
+        var result = images.Query()
+            .Where(image => activeProductIds.Contains(image.ProductId))
+            .OrderBy(image => image.ProductId)
+            .ThenBy(image => image.Order)
+            .Select(image => new ProductImageResponse(image.Id, image.ProductId, image.ProductVariantId, image.Url, image.AltText, image.Order, image.IsMain))
+            .ToList();
+
+        return Task.FromResult(Result.Success(result));
+    }
+}
+
 internal sealed class GetProductImageByIdQueryHandler(IRepository<ProductImageEntity> images)
     : IQueryHandler<GetProductImageByIdQuery, ProductImageResponse>
 {

@@ -2,6 +2,14 @@
 
 The repository-root `Dockerfile` builds the .NET API for Amazon ECR and ECS Express Mode. Local Docker Compose and the local `.env` continue to work independently.
 
+## Local Izipay sandbox
+
+Copy `Sweet_Silvia/.env.local.example` to `Sweet_Silvia/.env`, replace its placeholders with the Izipay **test** Shop ID, REST password and public key, and run the API with Docker Compose. The frontend local `.env` should use `VITE_API_URL=http://localhost:8080` and `VITE_IZIPAY_ENABLED=true`.
+
+Izipay must reach the notification endpoint over public HTTPS, so run an HTTPS tunnel to local port `8080` and use its URL for `Izipay__NotificationUrl`. Update that URL whenever the tunnel changes. Keep the test REST password only in the ignored local `.env`; never use the production password locally.
+
+In `Development`, checkout uses a clearly marked local shipping estimate only when `Olva__ApiKey` is missing. This keeps local Izipay checkout testable without presenting an estimated amount as an official Olva quote. Configure a valid Olva API key to exercise the real quote endpoint; this fallback is disabled outside `Development`.
+
 ## AWS architecture
 
 - One ECS Express Mode service for the frontend container.
@@ -23,7 +31,7 @@ Build the root `Dockerfile`, push the image to a private ECR repository and crea
 - Public HTTPS host: initially the generated application URL, then `api.sweetsilviastore.com`.
 - Network: the same VPC used by RDS.
 
-ECS Express Mode creates the Fargate service, HTTPS Application Load Balancer, target group, scaling, logging and deployment alarms. `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` lets ASP.NET Core honor the ALB scheme headers.
+ECS Express Mode creates the Fargate service, HTTPS Application Load Balancer, target group, scaling, logging and deployment alarms. Terraform passes the service subnet CIDRs as `ForwardedHeaders:KnownIPNetworks`; do not enable `ASPNETCORE_FORWARDEDHEADERS_ENABLED`, because it trusts forwarded headers from arbitrary sources.
 
 ## Configuration
 
@@ -32,8 +40,10 @@ Use `Sweet_Silvia/.env.stable.example` as the complete checklist. Keep ordinary 
 - `ConnectionStrings__SweetSilviaDatabase`
 - `Jwt__SecretKey`
 - `Email__ApiKey`
-- `Izipay__ApiKey`
-- `Izipay__HashKey`
+- `Izipay__ShopId`
+- `Izipay__Password`
+- `Izipay__HmacSha256Key`
+- `Izipay__PublicKey`
 - `Olva__ApiKey` when the live courier integration is enabled
 
 Set `Orders__PendingPaymentExpirationHours` (24 by default). A hosted cleanup process cancels only orders still in `PendingReceipt` after this period and releases their stock reservation transactionally. Orders with a receipt already under review are left for the operations team.
@@ -42,7 +52,7 @@ For the first deployment, keep `Google__Enabled=false` and `Izipay__Enabled=fals
 
 The Brevo sender must be a verified address. A syntactically valid placeholder is not sufficient for delivery, so configure `Email__From` together with `Email__ApiKey` before testing registration or email verification in production.
 
-Before publishing, run `dotnet test Sweet_Silvia/Sweet_Silvia.sln --configuration Release`. The frontend pipeline must pass `npm run test`, `npm run lint`, `npm run build` and `npm audit --omit=dev`.
+Before publishing, run `dotnet test Sweet_Silvia/Sweet_Silvia.sln --configuration Release`. The frontend pipeline must pass `npm run test`, `npm run lint`, `npm run build` and `npm audit --audit-level=high`.
 
 Do not configure `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. Assign an ECS task role with only these object permissions on the two application buckets:
 
@@ -68,8 +78,8 @@ After both generated ECS URLs pass smoke tests:
 
 1. Add the frontend domain to `Cors__AllowedOrigins__0`.
 2. Add the frontend domain to Google OAuth authorized JavaScript origins.
-3. Configure `Izipay__NotificationUrl=https://api.sweetsilviastore.com/api/payments/izipay/notifications`.
-4. Configure `Izipay__TermsAndConditionsUrl=https://sweetsilviastore.com/terms-and-conditions`.
-5. Complete the full Izipay sandbox flow before setting `Izipay__Enabled=true` and rebuilding the frontend with `VITE_IZIPAY_ENABLED=true`.
+3. Configure `Izipay__NotificationUrl=https://api.sweetsilviastore.com/api/payments/izipay/notifications` in the API and in the Izipay Back Office notification rules.
+4. For an end-to-end sandbox test on the public site, put the test REST password, test Shop ID and test public key in Secrets Manager and set `izipay_environment=Sandbox`. Complete Izipay's mandatory scenarios and verify a signed IPN.
+5. For live payments, replace those Secrets Manager values with the production Shop ID, REST password and public key; set `izipay_environment=Production`, then explicitly enable the backend and rebuild the frontend with `VITE_IZIPAY_ENABLED=true`. The production notification URL must be `https://api.sweetsilviastore.com/api/payments/izipay/notifications` and configured in Izipay Back Office.
 
-The Izipay panel password is not an application secret and must not be stored in ECS or Secrets Manager.
+Sandbox and production both use the official REST base URL `https://api.micuentaweb.pe/api-payment`; the account credentials determine the payment mode. The API REST password stays backend-only. The frontend receives only the public key and form token needed by Krypton. Never store the Back Office login password in ECS or Secrets Manager.

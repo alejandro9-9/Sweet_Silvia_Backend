@@ -1,4 +1,5 @@
 using Sweet_Silvia_Application.Abstractions.Messaging;
+using Sweet_Silvia_Application.Abstractions.Coupons;
 using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.PaymentReceipt;
 using Sweet_Silvia_Application.PaymentReview;
@@ -259,6 +260,7 @@ internal sealed class ReviewPaymentCommandHandler(
     IRepository<CouponEntity> coupons,
     IRepository<CouponUsageEntity> couponUsages,
     IRepository<PaymentMethodEntity> paymentMethods,
+    ICouponUsageLock couponUsageLock,
     IUnitOfWork unitOfWork)
     : ICommandHandler<ReviewPaymentCommand, Guid>
 {
@@ -291,6 +293,18 @@ internal sealed class ReviewPaymentCommandHandler(
                 "PaymentReview.InvalidResult",
                 "Payment review result should be Approved or Rejected."));
         }
+
+        var settlementOrder = request.Result == PaymentReviewResult.Approved
+            ? await orders.GetByIdAsync(payment.OrderId, cancellationToken)
+            : null;
+        if (request.Result == PaymentReviewResult.Approved && settlementOrder is null)
+        {
+            return Result.Failure<Guid>(ApplicationErrors.NotFound("Order", payment.OrderId));
+        }
+
+        await using var couponLock = settlementOrder?.CouponId is Guid couponId
+            ? await couponUsageLock.AcquireAsync(couponId, cancellationToken)
+            : null;
 
         var review = PaymentReviewEntity.Create(request.PaymentId, request.ReviewerUserId, request.Result, request.Observation);
         reviews.Add(review);
@@ -380,18 +394,6 @@ internal static class PaymentSettlementService
                 return Result.Failure(ApplicationErrors.NotFound("Coupon", order.CouponId.Value));
             }
 
-            if (coupon.MaximumTotalUses.HasValue &&
-                couponUsages.Query().Count(item => item.CouponId == coupon.Id) >= coupon.MaximumTotalUses.Value)
-            {
-                return Result.Failure(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "The coupon has reached its total usage limit."));
-            }
-
-            if (coupon.MaximumUsesPerUser.HasValue &&
-                couponUsages.Query().Count(item => item.CouponId == coupon.Id && item.UserId == order.UserId) >= coupon.MaximumUsesPerUser.Value)
-            {
-                return Result.Failure(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "The user has reached the coupon usage limit."));
-            }
-
             if (coupon.Scope == CouponScope.Order)
             {
                 couponUsage = CouponUsageEntity.Create(
@@ -423,48 +425,53 @@ internal static class PaymentSettlementService
 
         }
 
-        var itemVariants = new List<(OrderItemEntity Item, ProductVariantEntity Variant)>();
-        foreach (var item in items)
+        var reservationsByVariant = stockMovements.Query()
+            .Where(movement => movement.OrderId == order.Id && movement.Type == StockMovementType.Reservation)
+            .ToList()
+            .GroupBy(movement => movement.ProductVariantId)
+            .ToDictionary(group => group.Key, group => group.Sum(movement => movement.Quantity));
+        var itemVariants = new List<(Guid ProductVariantId, int Quantity, ProductVariantEntity Variant, bool HasReservation)>();
+        foreach (var itemGroup in items.GroupBy(item => item.ProductVariantId))
         {
-            var variant = await variants.GetByIdAsync(item.ProductVariantId, cancellationToken);
+            var variant = await variants.GetByIdAsync(itemGroup.Key, cancellationToken);
             if (variant is null || !variant.IsActive)
             {
-                return Result.Failure(ApplicationErrors.NotFound("ProductVariant", item.ProductVariantId));
+                return Result.Failure(ApplicationErrors.NotFound("ProductVariant", itemGroup.Key));
             }
 
-            var hasReservation = stockMovements.Query().Any(movement =>
-                movement.OrderId == order.Id &&
-                movement.ProductVariantId == item.ProductVariantId &&
-                movement.Type == StockMovementType.Reservation &&
-                movement.Quantity == item.Quantity);
+            var quantity = itemGroup.Sum(item => item.Quantity);
+            var reservedQuantity = reservationsByVariant.GetValueOrDefault(itemGroup.Key);
+            var hasReservation = reservedQuantity == quantity;
 
-            if (!hasReservation && variant.PhysicalStock < item.Quantity)
+            if (reservedQuantity > 0 && !hasReservation)
+            {
+                return Result.Failure(ApplicationErrors.Conflict(
+                    "Stock.ReservationMismatch",
+                    $"The stock reservation for product variant '{variant.Id}' does not match the order quantity."));
+            }
+
+            if (!hasReservation && variant.PhysicalStock < quantity)
             {
                 return Result.Failure(ApplicationErrors.Conflict("Stock.NotEnough", $"Product variant '{variant.Id}' does not have enough stock."));
             }
 
-            itemVariants.Add((item, variant));
+            itemVariants.Add((itemGroup.Key, quantity, variant, hasReservation));
         }
 
-        foreach (var (item, variant) in itemVariants)
+        foreach (var (productVariantId, quantity, variant, hasReservation) in itemVariants)
         {
-            var hasReservation = stockMovements.Query().Any(movement =>
-                movement.OrderId == order.Id &&
-                movement.ProductVariantId == item.ProductVariantId &&
-                movement.Type == StockMovementType.Reservation &&
-                movement.Quantity == item.Quantity);
             if (hasReservation)
             {
                 continue;
             }
 
             var previousStock = variant.PhysicalStock;
-            variant.DecreaseStock(item.Quantity);
+            variant.DecreaseStock(quantity);
             stockMovements.Add(StockMovementEntity.Create(
-                variant.Id,
+                productVariantId,
                 order.Id,
                 StockMovementType.Sale,
-                item.Quantity,
+                quantity,
                 previousStock,
                 variant.PhysicalStock,
                 "Payment approved."));

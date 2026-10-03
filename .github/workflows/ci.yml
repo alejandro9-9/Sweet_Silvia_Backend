@@ -20,9 +20,12 @@ jobs:
         run: dotnet test Sweet_Silvia/Sweet_Silvia.sln --no-restore --configuration Release --logger "console;verbosity=minimal"
 
   publish-image:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
+    concurrency:
+      group: sweet-silvia-backend-production
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
@@ -76,3 +79,14 @@ jobs:
 
       - name: Publish image summary
         run: printf '### Backend image\n`%s`\n' '${{ steps.image.outputs.uri }}' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy backend to ECS Express
+        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+        with:
+          service-name: sweet-silvia-backend
+          cluster: default
+          image: ${{ steps.image.outputs.uri }}
+          execution-role-arn: arn:aws:iam::145847015551:role/sweet-silvia-backend-execution-role
+          infrastructure-role-arn: arn:aws:iam::145847015551:role/sweet-silvia-ecs-express-infrastructure-role
+          container-port: "8080"
+          health-check-path: /health

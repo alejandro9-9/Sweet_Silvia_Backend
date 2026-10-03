@@ -56,6 +56,17 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
         return this.ToActionResult(result);
     }
 
+    [Authorize(Roles = ApiRoles.AnyAuthenticated)]
+    [HttpPatch("me/avatar")]
+    public async Task<IActionResult> UpdateMyAvatar(UpdateMyAvatarRequest request, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(
+            new UpdateUserAvatarCommand(User.GetUserId(), request.AvatarId),
+            cancellationToken);
+
+        return this.ToActionResult(result);
+    }
+
     [AllowAnonymous]
     [EnableRateLimiting("auth")]
     [HttpPost]
@@ -138,5 +149,7 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
 public sealed record RegisterUserRequest(string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email, string Password);
 
 public sealed record UpdateMyProfileRequest(string Name, string PaternalSurname, string? MaternalSurname, string Phone, string Email);
+
+public sealed record UpdateMyAvatarRequest(string AvatarId);
 
 public sealed record ChangeUserRoleRequest(Guid RoleId);

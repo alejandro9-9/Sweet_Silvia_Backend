@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using System.Net;
 using System.Data.Common;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
@@ -42,6 +43,15 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         if (IPAddress.TryParse(proxy, out var address))
         {
             options.KnownProxies.Add(address);
+        }
+    }
+
+    var configuredProxyNetworks = builder.Configuration.GetSection("ForwardedHeaders:KnownIPNetworks").Get<string[]>() ?? [];
+    foreach (var network in configuredProxyNetworks)
+    {
+        if (IPNetwork.TryParse(network, out var addressRange))
+        {
+            options.KnownIPNetworks.Add(addressRange);
         }
     }
 });
@@ -107,6 +117,17 @@ builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var response = context.HttpContext.Response;
+        response.ContentType = "application/problem+json";
+        await response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Demasiadas solicitudes",
+            Detail = "Espera un momento y vuelve a intentarlo."
+        }, cancellationToken);
+    };
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions
@@ -116,18 +137,48 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
             AutoReplenishment = true
         }));
-    options.AddPolicy("api", context => RateLimitPartition.GetFixedWindowLimiter(
+    options.AddPolicy("api", context => RateLimitPartition.GetTokenBucketLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions
+        _ => new TokenBucketRateLimiterOptions
         {
-            PermitLimit = 120,
-            Window = TimeSpan.FromMinutes(1),
+            TokenLimit = 300,
+            TokensPerPeriod = 30,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
             QueueLimit = 0,
             AutoReplenishment = true
         }));
 });
 
 var app = builder.Build();
+
+app.UseStatusCodePages(async statusContext =>
+{
+    var httpContext = statusContext.HttpContext;
+    if (!httpContext.Request.Path.StartsWithSegments("/api"))
+    {
+        return;
+    }
+
+    var status = httpContext.Response.StatusCode;
+    var title = status switch
+    {
+        StatusCodes.Status401Unauthorized => "No autorizado",
+        StatusCodes.Status403Forbidden => "Acceso denegado",
+        StatusCodes.Status404NotFound => "Recurso no encontrado",
+        StatusCodes.Status429TooManyRequests => "Demasiadas solicitudes",
+        _ => "No se pudo completar la solicitud"
+    };
+
+    httpContext.Response.ContentType = "application/problem+json";
+    await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
+    {
+        Status = status,
+        Title = title,
+        Detail = status == StatusCodes.Status429TooManyRequests
+            ? "Espera un momento y vuelve a intentarlo."
+            : null
+    });
+});
 
 app.Use(async (context, next) =>
 {

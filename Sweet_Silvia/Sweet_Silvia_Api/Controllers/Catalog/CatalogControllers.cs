@@ -161,6 +161,19 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new GetProductImagesByProductQuery(productId), cancellationToken));
 
+    [AllowAnonymous]
+    [HttpGet]
+    public async Task<IActionResult> GetByProducts([FromQuery] Guid[] productIds, CancellationToken cancellationToken)
+    {
+        var distinctProductIds = productIds.Distinct().ToArray();
+        if (distinctProductIds.Length is 0 or > 100)
+        {
+            return BadRequest(new { message = "Provide between 1 and 100 product IDs." });
+        }
+
+        return this.ToActionResult(await sender.Send(new GetProductImagesByProductsQuery(distinctProductIds), cancellationToken));
+    }
+
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost]
     public async Task<IActionResult> Create(CreateProductImageRequest request, CancellationToken cancellationToken)

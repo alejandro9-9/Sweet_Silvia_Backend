@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Common;
@@ -449,6 +450,10 @@ internal sealed class QuoteCustomerOlvaShipmentQueryHandler(
                 "Olva respondio sin un precio de cotizacion reconocible."));
         }
 
+        var isLocalEstimate = quote.Value.Data.ValueKind == JsonValueKind.Object &&
+            quote.Value.Data.TryGetProperty("isLocalEstimate", out var estimateFlag) &&
+            estimateFlag.ValueKind == JsonValueKind.True;
+
         return Result.Success(new OlvaCheckoutQuoteResponse(
             cost,
             "PEN",
@@ -457,7 +462,8 @@ internal sealed class QuoteCustomerOlvaShipmentQueryHandler(
             package.ChargeableWeightKg,
             package.LengthCm,
             package.WidthCm,
-            package.HeightCm));
+            package.HeightCm,
+            isLocalEstimate));
     }
 }
 

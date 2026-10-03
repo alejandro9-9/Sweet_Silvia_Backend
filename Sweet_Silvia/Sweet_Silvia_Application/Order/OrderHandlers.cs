@@ -1,7 +1,12 @@
 using Sweet_Silvia_Application.Abstractions.Messaging;
+using Sweet_Silvia_Application.Abstractions.Coupons;
+using Sweet_Silvia_Application.Abstractions.Orders;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.Courier;
+using Sweet_Silvia_Application.Coupon;
+using Sweet_Silvia_Application.Abstractions.Payments;
+using Sweet_Silvia_Application.Izipay;
 using Sweet_Silvia_Application.Olva;
 using Sweet_Silvia_Application.OrderItem;
 using Sweet_Silvia_Application.OrderStatusHistory;
@@ -13,6 +18,9 @@ using Sweet_Silvia_Domain.Coupon;
 using Sweet_Silvia_Domain.Courier;
 using Sweet_Silvia_Domain.District;
 using Sweet_Silvia_Domain.Order;
+using Sweet_Silvia_Domain.Payment;
+using Sweet_Silvia_Domain.PaymentMethod;
+using Sweet_Silvia_Domain.ProductImage;
 using Sweet_Silvia_Domain.OlvaAgency;
 using Sweet_Silvia_Domain.Shared.Enums;
 using Sweet_Silvia_Domain.Shared.ValueObjects;
@@ -36,6 +44,9 @@ using OrderStatusHistoryEntity = Sweet_Silvia_Domain.OrderStatusHistory.OrderSta
 using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
 using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
 using StockMovementEntity = Sweet_Silvia_Domain.StockMovement.StockMovement;
+using PaymentEntity = Sweet_Silvia_Domain.Payment.Payment;
+using PaymentMethodEntity = Sweet_Silvia_Domain.PaymentMethod.PaymentMethod;
+using ProductImageEntity = Sweet_Silvia_Domain.ProductImage.ProductImage;
 
 namespace Sweet_Silvia_Application.Order;
 
@@ -58,13 +69,97 @@ internal sealed class CreateOrderCommandHandler(
     IRepository<ShippingRateEntity> shippingRates,
     IRepository<OlvaAgencyEntity> olvaAgencies,
     IRepository<StockMovementEntity> stockMovements,
+    IRepository<PaymentEntity> payments,
+    IRepository<PaymentMethodEntity> paymentMethods,
     IOlvaCourierClient olvaCourierClient,
+    IIzipayPaymentGateway izipayPaymentGateway,
+    IUserCheckoutLock userCheckoutLock,
+    ICouponUsageLock couponUsageLock,
     IUnitOfWork unitOfWork)
-    : ICommandHandler<CreateOrderCommand, Guid>
+    : ICommandHandler<CreateOrderCommand, CreateOrderResponse>
 {
-    public async Task<Result<Guid>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
+    public async Task<Result<CreateOrderResponse>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
     {
         const string storeCurrency = "PEN";
+
+        if (request.IzipayPaymentMethodId.HasValue != (request.IzipayCustomer is not null))
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Izipay.CheckoutDetailsRequired",
+                "Izipay payment method and customer details must be provided together."));
+        }
+
+        PaymentMethodEntity? izipayPaymentMethod = null;
+        if (request.IzipayPaymentMethodId.HasValue)
+        {
+            izipayPaymentMethod = await paymentMethods.GetByIdAsync(request.IzipayPaymentMethodId.Value, cancellationToken);
+            if (izipayPaymentMethod is null || !izipayPaymentMethod.IsActive ||
+                izipayPaymentMethod.Type != PaymentMethodType.Gateway || !izipayPaymentMethod.RequiresExternalIntegration)
+            {
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                    "PaymentMethod.InvalidGateway",
+                    "The selected payment method is not an active external gateway."));
+            }
+
+            var customerError = IzipayCustomerValidation.Validate(request.IzipayCustomer);
+            if (customerError is not null)
+            {
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Izipay.InvalidCustomer", customerError));
+            }
+        }
+
+        await using var checkoutLock = izipayPaymentMethod is null
+            ? null
+            : await userCheckoutLock.AcquireAsync(request.UserId, cancellationToken);
+
+        if (izipayPaymentMethod is not null)
+        {
+            var existingGatewayPayment = payments.Query()
+                .Where(payment => payment.PaymentMethodId == izipayPaymentMethod.Id &&
+                    payment.Status == PaymentStatus.PendingGateway &&
+                    orders.Query().Any(order => order.Id == payment.OrderId &&
+                        order.UserId == request.UserId &&
+                        (order.Status == OrderStatus.PendingReceipt || order.Status == OrderStatus.ReceiptInReview)))
+                .OrderByDescending(payment => payment.CreatedAt)
+                .FirstOrDefault();
+
+            if (existingGatewayPayment is not null)
+            {
+                var existingOrder = await orders.GetByIdAsync(existingGatewayPayment.OrderId, cancellationToken);
+                var orderReference = existingGatewayPayment.GatewayTransactionId;
+                if (existingOrder is null || string.IsNullOrWhiteSpace(orderReference))
+                {
+                    return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                        "Izipay.ActiveCheckoutInvalid",
+                        "Existe un checkout Izipay activo que no se puede recuperar. Contacta a soporte antes de volver a intentar el pago."));
+                }
+
+                var gatewayResult = await izipayPaymentGateway.CreatePaymentFormAsync(
+                    new IzipayPaymentFormGatewayRequest(
+                        orderReference,
+                        existingOrder.Total.Amount,
+                        existingOrder.Total.Currency,
+                        request.IzipayCustomer!),
+                    cancellationToken);
+                if (gatewayResult.IsFailure)
+                {
+                    return Result.Failure<CreateOrderResponse>(gatewayResult.Error);
+                }
+
+                existingGatewayPayment.RefreshGatewaySession(DateTimeOffset.UtcNow.AddHours(24), "FORM_TOKEN_REFRESHED");
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+
+                var existingForm = new IzipayPaymentFormResponse(
+                    existingGatewayPayment.Id,
+                    existingOrder.Id,
+                    orderReference,
+                    gatewayResult.Value.FormToken,
+                    gatewayResult.Value.PublicKey,
+                    decimal.ToInt64(existingOrder.Total.Amount * 100m),
+                    existingOrder.Total.Currency);
+                return new CreateOrderResponse(existingOrder.Id, existingOrder.Total.Amount, existingOrder.Total.Currency, existingForm);
+            }
+        }
 
         var usesLiveOlvaQuote = !request.ShippingRateId.HasValue;
         var shippingRate = request.ShippingRateId.HasValue
@@ -73,7 +168,7 @@ internal sealed class CreateOrderCommandHandler(
         if ((!usesLiveOlvaQuote && (shippingRate is null || !shippingRate.IsActive)) ||
             (usesLiveOlvaQuote && (!request.ShippingAgencyId.HasValue || request.ExpectedOlvaShippingCost is not > 0)))
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.InvalidRate",
                 "Selecciona una tarifa vigente o cotiza el envio Olva antes de crear el pedido."));
         }
@@ -83,12 +178,12 @@ internal sealed class CreateOrderCommandHandler(
             : null;
         if (request.AddressId.HasValue && (address is null || !address.IsActive || address.UserId != request.UserId))
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Address", request.AddressId.Value));
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("Address", request.AddressId.Value));
         }
 
         if (!request.AddressId.HasValue && !usesLiveOlvaQuote && shippingRate!.DestinationType != ShippingDestinationType.Province)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.AddressRequired",
                 "A delivery address is required for this shipping service."));
         }
@@ -98,7 +193,7 @@ internal sealed class CreateOrderCommandHandler(
         var districtId = address?.DistrictId ?? request.ShippingDistrictId;
         if (!departmentId.HasValue || !provinceId.HasValue || !districtId.HasValue)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.LocationRequired",
                 "Department, province and district are required to create the order."));
         }
@@ -107,7 +202,7 @@ internal sealed class CreateOrderCommandHandler(
             .FirstOrDefault(item => item.Id == departmentId.Value && item.IsActive);
         if (department is null || (usesLiveOlvaQuote && department.DestinationType != ShippingDestinationType.Province))
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Department", departmentId.Value));
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("Department", departmentId.Value));
         }
 
         var courier = usesLiveOlvaQuote
@@ -115,7 +210,7 @@ internal sealed class CreateOrderCommandHandler(
             : await couriers.GetByIdAsync(shippingRate!.CourierId, cancellationToken);
         if (courier is null || !courier.IsActive)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.CourierUnavailable",
                 "The selected shipping service is currently unavailable."));
         }
@@ -123,7 +218,7 @@ internal sealed class CreateOrderCommandHandler(
         if ((!usesLiveOlvaQuote && courier.Type != shippingRate!.CourierType) ||
             (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency))
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.InvalidCourier",
                 "The selected shipping service is not compatible with the destination."));
         }
@@ -131,7 +226,7 @@ internal sealed class CreateOrderCommandHandler(
         if (!usesLiveOlvaQuote && (shippingRate!.DestinationType != department.DestinationType ||
             !shippingRate.AppliesTo(departmentId.Value, provinceId.Value, districtId.Value, department.DestinationType)))
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.InvalidRate",
                 "The selected shipping rate does not apply to the address."));
         }
@@ -143,12 +238,12 @@ internal sealed class CreateOrderCommandHandler(
 
         if (province is null || district is null)
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("ShippingLocation"));
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("ShippingLocation"));
         }
 
         if (department.DestinationType == ShippingDestinationType.Province && !request.ShippingAgencyId.HasValue)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.AgencyRequired",
                 "A pickup agency is required for province shipments."));
         }
@@ -161,7 +256,7 @@ internal sealed class CreateOrderCommandHandler(
                 !OlvaLocationNames.Matches(shippingAgency.Province, province.Name) ||
                 !OlvaLocationNames.Matches(shippingAgency.District, district.Name))
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Shipping.InvalidAgency",
                     "The selected agency is not available for the delivery address."));
             }
@@ -170,7 +265,7 @@ internal sealed class CreateOrderCommandHandler(
         var cart = carts.Query().FirstOrDefault(item => item.UserId == request.UserId && item.IsActive);
         if (cart is null)
         {
-            return Result.Failure<Guid>(ApplicationErrors.NotFound("Cart"));
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("Cart"));
         }
 
         var currentCartItems = cartItems.Query()
@@ -178,7 +273,7 @@ internal sealed class CreateOrderCommandHandler(
             .ToList();
         if (currentCartItems.Count == 0)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict("Order.EmptyCart", "The cart does not contain items."));
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Order.EmptyCart", "The cart does not contain items."));
         }
 
         var variantIds = currentCartItems.Select(item => item.ProductVariantId).ToList();
@@ -198,14 +293,14 @@ internal sealed class CreateOrderCommandHandler(
                 !currentProducts.TryGetValue(variant.ProductId, out var product) ||
                 !product.IsActive)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Order.InvalidCartItem",
                     "The cart contains an inactive or unavailable product."));
             }
 
             if (variant.PhysicalStock < cartItem.Quantity)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Stock.NotEnough",
                     $"Product variant '{variant.Id}' does not have enough stock."));
             }
@@ -213,7 +308,7 @@ internal sealed class CreateOrderCommandHandler(
             var unitPrice = variant.Price ?? product.BasePrice;
             if (unitPrice.Currency != storeCurrency)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Order.UnsupportedCurrency",
                     $"All store products must use {storeCurrency}."));
             }
@@ -226,7 +321,7 @@ internal sealed class CreateOrderCommandHandler(
             .ToList();
         if (request.CouponId.HasValue && !cartCoupons.Any(item => item.CouponId == request.CouponId.Value))
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Coupon.NotAppliedToCart",
                 "The selected coupon is not applied to the current cart."));
         }
@@ -236,7 +331,7 @@ internal sealed class CreateOrderCommandHandler(
             : cartCoupons;
         if (selectedCartCoupons.Count > 1)
         {
-            return Result.Failure<Guid>(ApplicationErrors.Conflict(
+        return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Coupon.MultipleCouponsNotSupported",
                 "Only one coupon can be applied to an order."));
         }
@@ -248,19 +343,22 @@ internal sealed class CreateOrderCommandHandler(
             var coupon = await coupons.GetByIdAsync(cartCoupon.CouponId, cancellationToken);
             if (coupon is null || !coupon.IsActive || DateTimeOffset.UtcNow < coupon.StartDate || DateTimeOffset.UtcNow > coupon.EndDate)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.Invalid", "A coupon applied to the cart is no longer valid."));
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Coupon.Invalid", "A coupon applied to the cart is no longer valid."));
             }
 
-            if (coupon.MaximumTotalUses.HasValue &&
-                couponUsages.Query().Count(item => item.CouponId == coupon.Id) >= coupon.MaximumTotalUses.Value)
+            var exceededLimit = CouponUsageLimitGuard.GetExceededLimit(
+                coupon,
+                request.UserId,
+                orders.Query(),
+                couponUsages.Query());
+            if (exceededLimit == CouponUsageLimitExceeded.Total)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "A coupon has reached its total usage limit."));
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "A coupon has reached its total usage limit."));
             }
 
-            if (coupon.MaximumUsesPerUser.HasValue &&
-                couponUsages.Query().Count(item => item.CouponId == coupon.Id && item.UserId == request.UserId) >= coupon.MaximumUsesPerUser.Value)
+            if (exceededLimit == CouponUsageLimitExceeded.PerUser)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "A coupon has already been used by this user."));
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "A coupon has already been used by this user."));
             }
 
             selectedCoupons.Add((
@@ -273,7 +371,7 @@ internal sealed class CreateOrderCommandHandler(
         {
             if (!ApplyCoupon(selectedCoupon.Applied, selectedCoupon.Coupon, selectedCoupon.Restrictions, lines))
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Coupon.NotApplicable",
                     "The selected coupon does not apply to the current cart."));
             }
@@ -305,19 +403,19 @@ internal sealed class CreateOrderCommandHandler(
                 cancellationToken);
             if (quote.IsFailure)
             {
-                return Result.Failure<Guid>(quote.Error);
+                return Result.Failure<CreateOrderResponse>(quote.Error);
             }
 
             if (!OlvaQuotePricing.TryReadCost(quote.Value.Data, out shippingAmount))
             {
-                return Result.Failure<Guid>(new Error(
+                return Result.Failure<CreateOrderResponse>(new Error(
                     "Olva.QuotePriceMissing",
                     "Olva respondio sin un precio de cotizacion reconocible."));
             }
 
             if (Math.Abs(shippingAmount - request.ExpectedOlvaShippingCost!.Value) > 0.01m)
             {
-                return Result.Failure<Guid>(ApplicationErrors.Conflict(
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                     "Shipping.QuoteChanged",
                     "La tarifa de Olva cambio. Actualiza la cotizacion antes de confirmar el pedido."));
             }
@@ -338,6 +436,48 @@ internal sealed class CreateOrderCommandHandler(
 
         var shippingCost = Money.Create(shippingAmount, storeCurrency);
         var total = Money.Create(subtotal.Amount - discountTotal.Amount + shippingCost.Amount, storeCurrency);
+
+        IzipayPaymentFormGatewayResponse? izipayForm = null;
+        string? izipayOrderReference = null;
+        if (izipayPaymentMethod is not null)
+        {
+            izipayOrderReference = Guid.NewGuid().ToString("N");
+            var gatewayResult = await izipayPaymentGateway.CreatePaymentFormAsync(
+                new IzipayPaymentFormGatewayRequest(
+                    izipayOrderReference,
+                    total.Amount,
+                    total.Currency,
+                    request.IzipayCustomer!),
+                cancellationToken);
+
+            if (gatewayResult.IsFailure)
+            {
+                return Result.Failure<CreateOrderResponse>(gatewayResult.Error);
+            }
+
+            izipayForm = gatewayResult.Value;
+        }
+
+        await using var couponLock = selectedCoupons.Count == 0
+            ? null
+            : await couponUsageLock.AcquireAsync(selectedCoupons[0].Coupon.Id, cancellationToken);
+        foreach (var selectedCoupon in selectedCoupons)
+        {
+            var exceededLimit = CouponUsageLimitGuard.GetExceededLimit(
+                selectedCoupon.Coupon,
+                request.UserId,
+                orders.Query(),
+                couponUsages.Query());
+            if (exceededLimit == CouponUsageLimitExceeded.Total)
+            {
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Coupon.TotalUsesExceeded", "A coupon has reached its total usage limit."));
+            }
+
+            if (exceededLimit == CouponUsageLimitExceeded.PerUser)
+            {
+                return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict("Coupon.UserUsesExceeded", "A coupon has already been used by this user."));
+            }
+        }
 
         var order = OrderEntity.Create(
             request.UserId,
@@ -368,13 +508,41 @@ internal sealed class CreateOrderCommandHandler(
             AddOrderItemSnapshot(order, line, line.Quantity - line.DiscountedQuantity, 0m, orderItems, storeCurrency);
         }
 
-        foreach (var cartItem in currentCartItems)
+        PaymentEntity? izipayPayment = null;
+        if (izipayPaymentMethod is not null && izipayOrderReference is not null)
         {
-            cartItems.Remove(cartItem);
+            izipayPayment = PaymentEntity.CreateGatewayPending(
+                order.Id,
+                izipayPaymentMethod.Id,
+                total,
+                izipayOrderReference,
+                izipayOrderReference,
+                DateTimeOffset.UtcNow.AddHours(24),
+                "FORM_TOKEN_CREATED");
+            payments.Add(izipayPayment);
+        }
+
+        if (izipayPayment is null)
+        {
+            foreach (var cartItem in currentCartItems)
+            {
+                cartItems.Remove(cartItem);
+            }
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return order.Id;
+        var formResponse = izipayForm is null || izipayPayment is null || izipayOrderReference is null
+            ? null
+            : new IzipayPaymentFormResponse(
+                izipayPayment.Id,
+                order.Id,
+                izipayOrderReference,
+                izipayForm.FormToken,
+                izipayForm.PublicKey,
+                decimal.ToInt64(total.Amount * 100m),
+                total.Currency);
+
+        return new CreateOrderResponse(order.Id, total.Amount, total.Currency, formResponse);
     }
 
     private static bool ApplyCoupon(
@@ -647,15 +815,43 @@ internal sealed class GetOrdersByUserQueryHandler(IRepository<OrderEntity> order
     }
 }
 
-internal sealed class GetOrderItemsByOrderQueryHandler(IRepository<OrderItemEntity> orderItems)
+internal sealed class GetOrderItemsByOrderQueryHandler(
+    IRepository<OrderItemEntity> orderItems,
+    IRepository<ProductVariantEntity> variants,
+    IRepository<ProductImageEntity> productImages)
     : IQueryHandler<GetOrderItemsByOrderQuery, List<OrderItemResponse>>
 {
     public Task<Result<List<OrderItemResponse>>> Handle(GetOrderItemsByOrderQuery request, CancellationToken cancellationToken)
     {
-        return Task.FromResult(Result.Success(orderItems.Query()
+        var orderItemsForOrder = orderItems.Query()
             .Where(item => item.OrderId == request.OrderId)
-            .Select(OrderMappings.ToItemResponse)
-            .ToList()));
+            .ToList();
+        var variantIds = orderItemsForOrder.Select(item => item.ProductVariantId).Distinct().ToHashSet();
+        var variantsById = variants.Query()
+            .Where(variant => variantIds.Contains(variant.Id))
+            .ToDictionary(variant => variant.Id);
+        var productIds = variantsById.Values.Select(variant => variant.ProductId).Distinct().ToHashSet();
+        var imagesByProduct = productImages.Query()
+            .Where(image => productIds.Contains(image.ProductId))
+            .OrderBy(image => image.Order)
+            .ToList()
+            .GroupBy(image => image.ProductId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var response = orderItemsForOrder.Select(item =>
+        {
+            variantsById.TryGetValue(item.ProductVariantId, out var variant);
+            imagesByProduct.TryGetValue(variant?.ProductId ?? Guid.Empty, out var images);
+            var imageUrl = images?
+                .OrderByDescending(image => image.ProductVariantId == item.ProductVariantId)
+                .ThenByDescending(image => image.IsMain)
+                .ThenBy(image => image.Order)
+                .FirstOrDefault()?.Url;
+
+            return OrderMappings.ToItemResponse(item, imageUrl);
+        }).ToList();
+
+        return Task.FromResult(Result.Success(response));
     }
 }
 
@@ -693,7 +889,7 @@ internal static class OrderMappings
             order.UpdatedAt);
     }
 
-    public static OrderItemResponse ToItemResponse(OrderItemEntity item)
+    public static OrderItemResponse ToItemResponse(OrderItemEntity item, string? imageUrl = null)
     {
         return new OrderItemResponse(
             item.Id,
@@ -707,7 +903,8 @@ internal static class OrderMappings
             item.HistoricalUnitPrice.Amount,
             item.HistoricalUnitDiscount.Amount,
             item.Subtotal.Amount,
-            item.Subtotal.Currency);
+            item.Subtotal.Currency,
+            imageUrl);
     }
 
     public static OrderStatusHistoryResponse ToHistoryResponse(OrderStatusHistoryEntity history)

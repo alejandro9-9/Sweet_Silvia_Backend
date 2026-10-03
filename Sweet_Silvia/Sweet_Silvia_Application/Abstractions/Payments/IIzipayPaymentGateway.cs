@@ -5,7 +5,7 @@ namespace Sweet_Silvia_Application.Abstractions.Payments;
 
 public interface IIzipayPaymentGateway
 {
-    Task<Result<IzipayPaymentLinkGatewayResponse>> GeneratePaymentLinkAsync(
-        IzipayPaymentLinkGatewayRequest request,
+    Task<Result<IzipayPaymentFormGatewayResponse>> CreatePaymentFormAsync(
+        IzipayPaymentFormGatewayRequest request,
         CancellationToken cancellationToken = default);
 }

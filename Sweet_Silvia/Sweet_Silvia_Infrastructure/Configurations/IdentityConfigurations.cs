@@ -20,6 +20,7 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<UserEntity>
         builder.Property(entity => entity.Email).HasConversion(new EmailAddressConverter()).IsRequired().HasMaxLength(255);
         builder.Property(entity => entity.PasswordHash).HasMaxLength(512);
         builder.Property(entity => entity.GoogleSubject).HasMaxLength(255);
+        builder.Property(entity => entity.AvatarId).IsRequired().HasMaxLength(16).HasDefaultValue("avatar_01");
         builder.Property(entity => entity.Status).HasConversion<string>().IsRequired().HasMaxLength(40);
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Property(entity => entity.UpdatedAt);
