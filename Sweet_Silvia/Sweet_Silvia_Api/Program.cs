@@ -49,7 +49,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     var configuredProxyNetworks = builder.Configuration.GetSection("ForwardedHeaders:KnownIPNetworks").Get<string[]>() ?? [];
     foreach (var network in configuredProxyNetworks)
     {
-        if (IPNetwork.TryParse(network, out var addressRange))
+        if (System.Net.IPNetwork.TryParse(network, out var addressRange))
         {
             options.KnownIPNetworks.Add(addressRange);
         }
