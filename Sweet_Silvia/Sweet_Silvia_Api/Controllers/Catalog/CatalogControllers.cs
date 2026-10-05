@@ -130,12 +130,12 @@ public sealed class ProductVariantsController(ISender sender) : ControllerBase
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost]
     public async Task<IActionResult> Create(CreateProductVariantRequest request, CancellationToken cancellationToken)
-        => this.ToCreatedResult(await sender.Send(new CreateProductVariantCommand(request.ProductId, request.Size, request.Color, request.Sku, request.PhysicalStock, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm, request.ChestCircumferenceCm, request.WaistCircumferenceCm, request.HipCircumferenceCm, request.SleeveLengthCm, request.FrontLengthCm, request.BackLengthCm), cancellationToken));
+        => this.ToCreatedResult(await sender.Send(new CreateProductVariantCommand(request.ProductId, request.Size, request.Color, request.Sku, request.PhysicalStock, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm), cancellationToken));
 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, UpdateProductVariantRequest request, CancellationToken cancellationToken)
-        => this.ToActionResult(await sender.Send(new UpdateProductVariantCommand(id, request.Size, request.Color, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm, request.ChestCircumferenceCm, request.WaistCircumferenceCm, request.HipCircumferenceCm, request.SleeveLengthCm, request.FrontLengthCm, request.BackLengthCm), cancellationToken));
+        => this.ToActionResult(await sender.Send(new UpdateProductVariantCommand(id, request.Size, request.Color, request.Price, request.Currency, request.ShippingWeightKg, request.ShippingLengthCm, request.ShippingWidthCm, request.ShippingHeightCm), cancellationToken));
 
     [Authorize(Roles = ApiRoles.Administrator)]
     [HttpDelete("{id:guid}")]
@@ -340,8 +340,8 @@ public sealed record UpdateCollectionRequest(string Name, string Description);
 public sealed record CreateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
 public sealed record UpdateProductRequest(Guid CategoryId, Guid? CollectionId, string Name, string? Description, decimal BasePrice, string Currency = "PEN");
 public sealed record ReorderProductsRequest(IReadOnlyList<Guid> ProductIds);
-public sealed record CreateProductVariantRequest(Guid ProductId, string Size, string Color, string Sku, int PhysicalStock, decimal? Price = null, string Currency = "PEN", decimal ShippingWeightKg = 0.3m, decimal ShippingLengthCm = 30m, decimal ShippingWidthCm = 22m, decimal ShippingHeightCm = 4m, decimal? ChestCircumferenceCm = null, decimal? WaistCircumferenceCm = null, decimal? HipCircumferenceCm = null, decimal? SleeveLengthCm = null, decimal? FrontLengthCm = null, decimal? BackLengthCm = null);
-public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN", decimal? ShippingWeightKg = null, decimal? ShippingLengthCm = null, decimal? ShippingWidthCm = null, decimal? ShippingHeightCm = null, decimal? ChestCircumferenceCm = null, decimal? WaistCircumferenceCm = null, decimal? HipCircumferenceCm = null, decimal? SleeveLengthCm = null, decimal? FrontLengthCm = null, decimal? BackLengthCm = null);
+public sealed record CreateProductVariantRequest(Guid ProductId, string Size, string Color, string Sku, int PhysicalStock, decimal? Price = null, string Currency = "PEN", decimal ShippingWeightKg = 0.3m, decimal ShippingLengthCm = 30m, decimal ShippingWidthCm = 22m, decimal ShippingHeightCm = 4m);
+public sealed record UpdateProductVariantRequest(string Size, string Color, decimal? Price = null, string Currency = "PEN", decimal? ShippingWeightKg = null, decimal? ShippingLengthCm = null, decimal? ShippingWidthCm = null, decimal? ShippingHeightCm = null);
 public sealed record CreateProductImageRequest(Guid ProductId, Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
 public sealed record UpdateProductImageRequest(Guid? ProductVariantId, string Url, string? AltText, int Order, bool IsMain);
 public sealed record ReorderProductImagesRequest(IReadOnlyList<Guid> ImageIds);

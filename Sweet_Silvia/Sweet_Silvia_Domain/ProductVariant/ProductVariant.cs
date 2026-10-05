@@ -7,7 +7,7 @@ public sealed class ProductVariant : Entity
 {
     private ProductVariant() { }
 
-    public ProductVariant(Guid id, Guid productId, string size, string color, Sku sku, int physicalStock, Money? price, decimal shippingWeightKg, decimal shippingLengthCm, decimal shippingWidthCm, decimal shippingHeightCm, decimal? chestCircumferenceCm, decimal? waistCircumferenceCm, decimal? hipCircumferenceCm, decimal? sleeveLengthCm, decimal? frontLengthCm, decimal? backLengthCm, bool isActive, DateTimeOffset createdAt)
+    public ProductVariant(Guid id, Guid productId, string size, string color, Sku sku, int physicalStock, Money? price, decimal shippingWeightKg, decimal shippingLengthCm, decimal shippingWidthCm, decimal shippingHeightCm, bool isActive, DateTimeOffset createdAt)
         : base(id)
     {
         ProductId = productId;
@@ -20,12 +20,6 @@ public sealed class ProductVariant : Entity
         ShippingLengthCm = shippingLengthCm;
         ShippingWidthCm = shippingWidthCm;
         ShippingHeightCm = shippingHeightCm;
-        ChestCircumferenceCm = chestCircumferenceCm;
-        WaistCircumferenceCm = waistCircumferenceCm;
-        HipCircumferenceCm = hipCircumferenceCm;
-        SleeveLengthCm = sleeveLengthCm;
-        FrontLengthCm = frontLengthCm;
-        BackLengthCm = backLengthCm;
         IsActive = isActive;
         CreatedAt = createdAt;
     }
@@ -40,17 +34,11 @@ public sealed class ProductVariant : Entity
     public decimal ShippingLengthCm { get; private set; }
     public decimal ShippingWidthCm { get; private set; }
     public decimal ShippingHeightCm { get; private set; }
-    public decimal? ChestCircumferenceCm { get; private set; }
-    public decimal? WaistCircumferenceCm { get; private set; }
-    public decimal? HipCircumferenceCm { get; private set; }
-    public decimal? SleeveLengthCm { get; private set; }
-    public decimal? FrontLengthCm { get; private set; }
-    public decimal? BackLengthCm { get; private set; }
     public bool IsActive { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
 
-    public static ProductVariant Create(Guid productId, string size, string color, Sku sku, int physicalStock, Money? price = null, decimal shippingWeightKg = 0.3m, decimal shippingLengthCm = 30m, decimal shippingWidthCm = 22m, decimal shippingHeightCm = 4m, decimal? chestCircumferenceCm = null, decimal? waistCircumferenceCm = null, decimal? hipCircumferenceCm = null, decimal? sleeveLengthCm = null, decimal? frontLengthCm = null, decimal? backLengthCm = null)
+    public static ProductVariant Create(Guid productId, string size, string color, Sku sku, int physicalStock, Money? price = null, decimal shippingWeightKg = 0.3m, decimal shippingLengthCm = 30m, decimal shippingWidthCm = 22m, decimal shippingHeightCm = 4m)
     {
         if (productId == Guid.Empty)
         {
@@ -73,8 +61,7 @@ public sealed class ProductVariant : Entity
         }
 
         ValidateShippingDimensions(shippingWeightKg, shippingLengthCm, shippingWidthCm, shippingHeightCm);
-        ValidateGarmentMeasurements(chestCircumferenceCm, waistCircumferenceCm, hipCircumferenceCm, sleeveLengthCm, frontLengthCm, backLengthCm);
-        var result = new ProductVariant(Guid.NewGuid(), productId, size.Trim(), color.Trim(), sku, physicalStock, price, shippingWeightKg, shippingLengthCm, shippingWidthCm, shippingHeightCm, chestCircumferenceCm, waistCircumferenceCm, hipCircumferenceCm, sleeveLengthCm, frontLengthCm, backLengthCm, true, DateTimeOffset.UtcNow);
+        var result = new ProductVariant(Guid.NewGuid(), productId, size.Trim(), color.Trim(), sku, physicalStock, price, shippingWeightKg, shippingLengthCm, shippingWidthCm, shippingHeightCm, true, DateTimeOffset.UtcNow);
         result.AddDomainEvent(new ProductVariantCreatedEvent(result.Id));
         return result;
     }
@@ -106,7 +93,7 @@ public sealed class ProductVariant : Entity
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 
-    public void Update(string size, string color, Money? price, decimal? shippingWeightKg = null, decimal? shippingLengthCm = null, decimal? shippingWidthCm = null, decimal? shippingHeightCm = null, decimal? chestCircumferenceCm = null, decimal? waistCircumferenceCm = null, decimal? hipCircumferenceCm = null, decimal? sleeveLengthCm = null, decimal? frontLengthCm = null, decimal? backLengthCm = null)
+    public void Update(string size, string color, Money? price, decimal? shippingWeightKg = null, decimal? shippingLengthCm = null, decimal? shippingWidthCm = null, decimal? shippingHeightCm = null)
     {
         if (string.IsNullOrWhiteSpace(size))
         {
@@ -126,17 +113,10 @@ public sealed class ProductVariant : Entity
         var nextWidth = shippingWidthCm ?? ShippingWidthCm;
         var nextHeight = shippingHeightCm ?? ShippingHeightCm;
         ValidateShippingDimensions(nextWeight, nextLength, nextWidth, nextHeight);
-        ValidateGarmentMeasurements(chestCircumferenceCm, waistCircumferenceCm, hipCircumferenceCm, sleeveLengthCm, frontLengthCm, backLengthCm);
         ShippingWeightKg = nextWeight;
         ShippingLengthCm = nextLength;
         ShippingWidthCm = nextWidth;
         ShippingHeightCm = nextHeight;
-        ChestCircumferenceCm = chestCircumferenceCm;
-        WaistCircumferenceCm = waistCircumferenceCm;
-        HipCircumferenceCm = hipCircumferenceCm;
-        SleeveLengthCm = sleeveLengthCm;
-        FrontLengthCm = frontLengthCm;
-        BackLengthCm = backLengthCm;
         UpdatedAt = DateTimeOffset.UtcNow;
         AddDomainEvent(new ProductVariantUpdatedEvent(Id));
     }
@@ -153,14 +133,6 @@ public sealed class ProductVariant : Entity
         if (weightKg <= 0 || lengthCm <= 0 || widthCm <= 0 || heightCm <= 0)
         {
             throw new ArgumentException("Shipping dimensions and weight must be greater than zero.");
-        }
-    }
-
-    private static void ValidateGarmentMeasurements(params decimal?[] measurements)
-    {
-        if (measurements.Any(measurement => measurement.HasValue && (measurement.Value <= 0 || measurement.Value > 500)))
-        {
-            throw new ArgumentException("Las medidas de la prenda deben ser mayores que cero y no superar los 500 cm.");
         }
     }
 }

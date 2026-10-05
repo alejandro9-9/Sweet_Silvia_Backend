@@ -46,12 +46,6 @@ internal sealed class ProductVariantConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(entity => entity.ShippingLengthCm).HasPrecision(10, 2).IsRequired();
         builder.Property(entity => entity.ShippingWidthCm).HasPrecision(10, 2).IsRequired();
         builder.Property(entity => entity.ShippingHeightCm).HasPrecision(10, 2).IsRequired();
-        builder.Property(entity => entity.ChestCircumferenceCm).HasPrecision(10, 2);
-        builder.Property(entity => entity.WaistCircumferenceCm).HasPrecision(10, 2);
-        builder.Property(entity => entity.HipCircumferenceCm).HasPrecision(10, 2);
-        builder.Property(entity => entity.SleeveLengthCm).HasPrecision(10, 2);
-        builder.Property(entity => entity.FrontLengthCm).HasPrecision(10, 2);
-        builder.Property(entity => entity.BackLengthCm).HasPrecision(10, 2);
         builder.Property(entity => entity.IsActive).IsRequired();
         builder.Property(entity => entity.CreatedAt).IsRequired();
         builder.Property(entity => entity.UpdatedAt);

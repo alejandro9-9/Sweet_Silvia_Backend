@@ -1041,14 +1041,6 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<decimal?>("BackLengthCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
-
-                    b.Property<decimal?>("ChestCircumferenceCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
-
                     b.Property<string>("Color")
                         .IsRequired()
                         .HasMaxLength(80)
@@ -1056,14 +1048,6 @@ namespace Sweet_Silvia_Infrastructure.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal?>("FrontLengthCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
-
-                    b.Property<decimal?>("HipCircumferenceCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -1104,16 +1088,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<decimal?>("SleeveLengthCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
-
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal?>("WaistCircumferenceCm")
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)");
 
                     b.Property<uint>("xmin")
                         .IsConcurrencyToken()
@@ -1464,13 +1440,6 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("AvatarId")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasDefaultValue("avatar_01");
-
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1478,6 +1447,13 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<string>("AvatarId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("avatar_01");
 
                     b.Property<string>("GoogleSubject")
                         .HasMaxLength(255)
@@ -1661,7 +1637,8 @@ namespace Sweet_Silvia_Infrastructure.Migrations
                     b.HasOne("Sweet_Silvia_Domain.Address.Address", null)
                         .WithMany()
                         .HasForeignKey("AddressId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("Sweet_Silvia_Domain.Coupon.Coupon", null)
                         .WithMany()
