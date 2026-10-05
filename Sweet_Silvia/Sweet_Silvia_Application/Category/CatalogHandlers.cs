@@ -368,7 +368,13 @@ internal sealed class CreateProductVariantCommandHandler(
             request.ShippingWeightKg,
             request.ShippingLengthCm,
             request.ShippingWidthCm,
-            request.ShippingHeightCm);
+            request.ShippingHeightCm,
+            request.ChestCircumferenceCm,
+            request.WaistCircumferenceCm,
+            request.HipCircumferenceCm,
+            request.SleeveLengthCm,
+            request.FrontLengthCm,
+            request.BackLengthCm);
 
         variants.Add(variant);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -394,7 +400,13 @@ internal sealed class UpdateProductVariantCommandHandler(IRepository<ProductVari
             request.ShippingWeightKg,
             request.ShippingLengthCm,
             request.ShippingWidthCm,
-            request.ShippingHeightCm);
+            request.ShippingHeightCm,
+            request.ChestCircumferenceCm,
+            request.WaistCircumferenceCm,
+            request.HipCircumferenceCm,
+            request.SleeveLengthCm,
+            request.FrontLengthCm,
+            request.BackLengthCm);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
@@ -776,6 +788,12 @@ internal static class CatalogMappings
             variant.ShippingLengthCm,
             variant.ShippingWidthCm,
             variant.ShippingHeightCm,
+            variant.ChestCircumferenceCm,
+            variant.WaistCircumferenceCm,
+            variant.HipCircumferenceCm,
+            variant.SleeveLengthCm,
+            variant.FrontLengthCm,
+            variant.BackLengthCm,
             variant.IsActive);
     }
 }
