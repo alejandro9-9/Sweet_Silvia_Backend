@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Domain.Abstractions;
 
 namespace Sweet_Silvia_Api.Extensions;
@@ -27,5 +28,8 @@ public static class ResultExtensions
     }
 
     private static IActionResult Failure(ControllerBase controller, Error error)
-        => controller.StatusCode(error.StatusCode ?? StatusCodes.Status400BadRequest, error);
+    {
+        var userFacingError = UserFacingErrorMessages.Localize(error);
+        return controller.StatusCode(userFacingError.StatusCode ?? StatusCodes.Status400BadRequest, userFacingError);
+    }
 }

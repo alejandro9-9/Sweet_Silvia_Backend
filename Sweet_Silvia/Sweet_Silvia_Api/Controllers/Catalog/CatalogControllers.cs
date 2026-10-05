@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
+using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.Abstractions.Storage;
 using Sweet_Silvia_Application.Category;
 using Sweet_Silvia_Application.Collection;
@@ -146,7 +147,8 @@ public sealed class ProductVariantsController(ISender sender) : ControllerBase
 [Route("api/product-images")]
 public sealed class ProductImagesController(ISender sender, IFileStorageService fileStorage) : ControllerBase
 {
-    private const long MaximumImageSizeBytes = 5 * 1024 * 1024;
+    private const long MaximumImageSizeBytes = 15 * 1024 * 1024;
+    private const long MaximumImageRequestSizeBytes = MaximumImageSizeBytes + 64 * 1024;
 
     private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -168,7 +170,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
         var distinctProductIds = productIds.Distinct().ToArray();
         if (distinctProductIds.Length is 0 or > 100)
         {
-            return BadRequest(new { message = "Provide between 1 and 100 product IDs." });
+            return BadRequest(new { message = "Selecciona entre 1 y 100 productos." });
         }
 
         return this.ToActionResult(await sender.Send(new GetProductImagesByProductsQuery(distinctProductIds), cancellationToken));
@@ -182,7 +184,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     [Authorize(Roles = ApiRoles.AdministratorOrAssistant)]
     [HttpPost("upload")]
     [Consumes("multipart/form-data")]
-    [RequestSizeLimit(MaximumImageSizeBytes)]
+    [RequestSizeLimit(MaximumImageRequestSizeBytes)]
     public async Task<IActionResult> Upload([FromForm] UploadProductImageFileRequest request, CancellationToken cancellationToken)
     {
         var validationError = await ValidateFileAsync(request.File, AllowedImageExtensions, MaximumImageSizeBytes, cancellationToken);
@@ -201,7 +203,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
 
         if (!product.Value.IsActive)
         {
-            return BadRequest(new { error = "Product is inactive." });
+            return BadRequest(new { error = "El producto está inactivo y no admite nuevas imágenes." });
         }
 
         if (request.ProductVariantId.HasValue)
@@ -214,12 +216,12 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
 
             if (variant.Value.ProductId != request.ProductId)
             {
-                return BadRequest(new { error = "Product variant does not belong to the selected product." });
+                return BadRequest(new { error = "La variante seleccionada no pertenece a este producto." });
             }
 
             if (!variant.Value.IsActive)
             {
-                return BadRequest(new { error = "Product variant is inactive." });
+                return BadRequest(new { error = "La variante seleccionada está inactiva." });
             }
         }
 
@@ -247,7 +249,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             if (result.IsFailure)
             {
                 await fileStorage.DeleteAsync(storedFile.Url, cancellationToken);
-                return BadRequest(result.Error);
+                return BadRequest(UserFacingErrorMessages.Localize(result.Error));
             }
 
             return Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key });
@@ -294,18 +296,18 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
     {
         if (file is null || file.Length == 0)
         {
-            return "File is required.";
+            return "Selecciona una imagen para continuar.";
         }
 
         if (file.Length > maximumSizeBytes)
         {
-            return $"File should not exceed {maximumSizeBytes / 1024 / 1024} MB.";
+            return $"La imagen es demasiado grande. El tamaño máximo permitido es {maximumSizeBytes / 1024 / 1024} MB.";
         }
 
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (!allowedExtensions.Contains(extension))
         {
-            return $"File extension '{extension}' is not allowed.";
+            return "Formato no permitido. Elige una imagen JPG, PNG o WEBP.";
         }
 
         await using var stream = file.OpenReadStream();
@@ -319,7 +321,7 @@ public sealed class ProductImagesController(ISender sender, IFileStorageService 
             _ => false
         };
 
-        return validSignature ? null : "The file content does not match its extension.";
+        return validSignature ? null : "El archivo no parece ser una imagen válida. Elige un JPG, PNG o WEBP.";
     }
 
     private static string GetContentType(string extension) => extension switch

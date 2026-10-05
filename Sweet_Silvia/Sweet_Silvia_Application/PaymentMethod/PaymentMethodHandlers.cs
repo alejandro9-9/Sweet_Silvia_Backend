@@ -51,6 +51,23 @@ internal sealed class DeletePaymentMethodCommandHandler(IRepository<PaymentMetho
     }
 }
 
+internal sealed class ActivatePaymentMethodCommandHandler(IRepository<PaymentMethodEntity> paymentMethods, IUnitOfWork unitOfWork)
+    : ICommandHandler<ActivatePaymentMethodCommand>
+{
+    public async Task<Result> Handle(ActivatePaymentMethodCommand request, CancellationToken cancellationToken)
+    {
+        var paymentMethod = await paymentMethods.GetByIdAsync(request.Id, cancellationToken);
+        if (paymentMethod is null)
+        {
+            return Result.Failure(ApplicationErrors.NotFound("PaymentMethod", request.Id));
+        }
+
+        paymentMethod.Activate();
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
 internal sealed class GetPaymentMethodByIdQueryHandler(IRepository<PaymentMethodEntity> paymentMethods)
     : IQueryHandler<GetPaymentMethodByIdQuery, PaymentMethodResponse>
 {

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
 using Microsoft.AspNetCore.RateLimiting;
+using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Filters;
 using Sweet_Silvia_Application;
@@ -91,6 +92,29 @@ builder.Services.AddControllers(options =>
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+    })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(entry => entry.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value!.Errors
+                        .Select(error => UserFacingErrorMessages.ForModelValidation(entry.Key, error.ErrorMessage))
+                        .Distinct()
+                        .ToArray());
+            var problem = new ValidationProblemDetails(errors)
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = UserFacingErrorMessages.GetTitle(StatusCodes.Status400BadRequest),
+                Detail = "Corrige los campos indicados y vuelve a intentarlo."
+            };
+            problem.Extensions["code"] = "Request.ValidationFailed";
+            problem.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+            return new BadRequestObjectResult(problem);
+        };
     });
 
 builder.Services.AddEndpointsApiExplorer();
@@ -160,24 +184,28 @@ app.UseStatusCodePages(async statusContext =>
     }
 
     var status = httpContext.Response.StatusCode;
-    var title = status switch
+    var code = status switch
     {
-        StatusCodes.Status401Unauthorized => "No autorizado",
-        StatusCodes.Status403Forbidden => "Acceso denegado",
-        StatusCodes.Status404NotFound => "Recurso no encontrado",
-        StatusCodes.Status429TooManyRequests => "Demasiadas solicitudes",
-        _ => "No se pudo completar la solicitud"
+        StatusCodes.Status401Unauthorized => "Auth.Unauthorized",
+        StatusCodes.Status403Forbidden => "Auth.Forbidden",
+        StatusCodes.Status404NotFound => "Resource.NotFound",
+        StatusCodes.Status409Conflict => "Operation.Conflict",
+        StatusCodes.Status413PayloadTooLarge => "File.TooLarge",
+        StatusCodes.Status415UnsupportedMediaType => "File.UnsupportedFormat",
+        StatusCodes.Status429TooManyRequests => "Request.TooManyRequests",
+        _ => "Request.NotCompleted"
     };
 
     httpContext.Response.ContentType = "application/problem+json";
-    await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
+    var problem = new ProblemDetails
     {
         Status = status,
-        Title = title,
-        Detail = status == StatusCodes.Status429TooManyRequests
-            ? "Espera un momento y vuelve a intentarlo."
-            : null
-    });
+        Title = UserFacingErrorMessages.GetTitle(status),
+        Detail = UserFacingErrorMessages.ForStatus(status)
+    };
+    problem.Extensions["code"] = code;
+    problem.Extensions["traceId"] = httpContext.TraceIdentifier;
+    await httpContext.Response.WriteAsJsonAsync(problem);
 });
 
 app.Use(async (context, next) =>

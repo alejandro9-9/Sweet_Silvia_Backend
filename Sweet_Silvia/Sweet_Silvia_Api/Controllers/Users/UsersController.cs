@@ -76,8 +76,8 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
         if (customerRoleId == Guid.Empty)
         {
             return Problem(
-                title: "Customer role is not configured.",
-                detail: "Configure Roles:CustomerRoleId before allowing public registration.",
+                title: "El registro no está disponible temporalmente.",
+                detail: "No se pudo completar la creación de la cuenta. Inténtalo más tarde.",
                 statusCode: StatusCodes.Status500InternalServerError);
         }
 
@@ -101,7 +101,7 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     {
         if (id == User.GetUserId())
         {
-            return Conflict(new { code = "User.CannotBlockSelf", message = "You cannot block your own account." });
+            return Conflict(new { code = "User.CannotBlockSelf", message = "No puedes bloquear tu propia cuenta." });
         }
 
         var result = await sender.Send(new BlockUserCommand(id), cancellationToken);
@@ -122,7 +122,7 @@ public sealed class UsersController(ISender sender, IConfiguration configuration
     {
         if (id == User.GetUserId())
         {
-            return Conflict(new { code = "User.CannotChangeOwnRole", message = "You cannot change your own role." });
+            return Conflict(new { code = "User.CannotChangeOwnRole", message = "No puedes cambiar el rol de tu propia cuenta." });
         }
 
         var result = await sender.Send(new ChangeUserRoleCommand(id, request.RoleId), cancellationToken);

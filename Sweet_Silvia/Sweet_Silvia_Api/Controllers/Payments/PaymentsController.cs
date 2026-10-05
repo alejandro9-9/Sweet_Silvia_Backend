@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.Abstractions.Storage;
+using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.Izipay;
 using Sweet_Silvia_Application.Order;
 using Sweet_Silvia_Application.Payment;
@@ -60,6 +61,11 @@ public sealed class PaymentMethodsController(ISender sender, IConfiguration conf
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
         => this.ToActionResult(await sender.Send(new DeletePaymentMethodCommand(id), cancellationToken));
+
+    [Authorize(Roles = ApiRoles.Administrator)]
+    [HttpPost("{id:guid}/activate")]
+    public async Task<IActionResult> Activate(Guid id, CancellationToken cancellationToken)
+        => this.ToActionResult(await sender.Send(new ActivatePaymentMethodCommand(id), cancellationToken));
 
     private bool IsIzipayReady()
     {
@@ -146,7 +152,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
             return Conflict(new
             {
                 code = "Izipay.NotAvailable",
-                message = "Izipay estara disponible cuando la tienda este desplegada y las URLs publicas hayan sido configuradas."
+                message = "Izipay estará disponible cuando la tienda esté desplegada y se hayan configurado sus direcciones públicas."
             });
         }
 
@@ -173,7 +179,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
     {
         if (!IsIzipayReady())
         {
-            return Conflict(new { code = "Izipay.NotAvailable", message = "Izipay no esta disponible." });
+            return Conflict(new { code = "Izipay.NotAvailable", message = "Izipay no está disponible en este momento. Elige otro método de pago o inténtalo más tarde." });
         }
 
         var payment = await sender.Send(new GetPaymentByIdQuery(request.PaymentId), cancellationToken);
@@ -233,7 +239,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
             return Conflict(new
             {
                 code = "Izipay.NotAvailable",
-                message = "Izipay estara disponible cuando la tienda este desplegada y las URLs publicas hayan sido configuradas."
+                message = "Izipay estará disponible cuando la tienda esté desplegada y se hayan configurado sus direcciones públicas."
             });
         }
 
@@ -269,6 +275,7 @@ public sealed class PaymentsController(ISender sender, IConfiguration configurat
 public sealed class PaymentReceiptsController(ISender sender, IFileStorageService fileStorage) : ControllerBase
 {
     private const long MaximumReceiptSizeBytes = 10 * 1024 * 1024;
+    private const long MaximumReceiptRequestSizeBytes = MaximumReceiptSizeBytes + 64 * 1024;
 
     private static readonly HashSet<string> AllowedReceiptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -282,7 +289,7 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
     [Authorize(Roles = ApiRoles.Customer)]
     [HttpPost("upload-file")]
     [Consumes("multipart/form-data")]
-    [RequestSizeLimit(MaximumReceiptSizeBytes)]
+    [RequestSizeLimit(MaximumReceiptRequestSizeBytes)]
     public async Task<IActionResult> UploadFile([FromForm] UploadPaymentReceiptFileRequest request, CancellationToken cancellationToken)
     {
         var validationError = await ValidateFileAsync(request.File, AllowedReceiptExtensions, MaximumReceiptSizeBytes, cancellationToken);
@@ -334,7 +341,7 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
             if (result.IsFailure)
             {
                 await fileStorage.DeleteAsync(storedFile.Key, cancellationToken);
-                return BadRequest(result.Error);
+                return BadRequest(UserFacingErrorMessages.Localize(result.Error));
             }
 
             return Ok(new { id = result.Value, url = storedFile.Url, key = storedFile.Key });
@@ -416,18 +423,18 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
     {
         if (file is null || file.Length == 0)
         {
-            return "File is required.";
+            return "Selecciona un comprobante para continuar.";
         }
 
         if (file.Length > maximumSizeBytes)
         {
-            return $"File should not exceed {maximumSizeBytes / 1024 / 1024} MB.";
+            return $"El comprobante es demasiado grande. El tamaño máximo permitido es {maximumSizeBytes / 1024 / 1024} MB.";
         }
 
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (!allowedExtensions.Contains(extension))
         {
-            return $"File extension '{extension}' is not allowed.";
+            return "Formato no permitido. Elige una imagen JPG, PNG, WEBP o un archivo PDF.";
         }
 
         await using var stream = file.OpenReadStream();
@@ -442,7 +449,7 @@ public sealed class PaymentReceiptsController(ISender sender, IFileStorageServic
             _ => false
         };
 
-        return validSignature ? null : "The file content does not match its extension.";
+        return validSignature ? null : "El archivo no coincide con su formato. Elige una imagen o un PDF válido.";
     }
 
     private static string GetContentType(string extension) => extension switch

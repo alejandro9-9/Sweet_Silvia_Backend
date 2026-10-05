@@ -48,6 +48,17 @@ public sealed class PaymentMethod : Entity
         AddDomainEvent(new PaymentMethodDeletedEvent(Id));
     }
 
+    public void Activate()
+    {
+        if (IsActive)
+        {
+            return;
+        }
+
+        IsActive = true;
+        AddDomainEvent(new PaymentMethodUpdatedEvent(Id));
+    }
+
     private static void Validate(string name, PaymentMethodType type, bool requiresManualVerification, bool requiresExternalIntegration)
     {
         if (string.IsNullOrWhiteSpace(name))

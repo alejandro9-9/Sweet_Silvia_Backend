@@ -75,7 +75,7 @@ public sealed class OrdersController(ISender sender) : ControllerBase
     {
         if (!request.IzipayPaymentMethodId.HasValue || request.IzipayCustomer is null)
         {
-            return BadRequest(new { message = "Izipay payment method and customer details are required." });
+            return BadRequest(new { message = "Selecciona Izipay e ingresa los datos del titular para iniciar el pago." });
         }
 
         if (request.AddressId.HasValue)

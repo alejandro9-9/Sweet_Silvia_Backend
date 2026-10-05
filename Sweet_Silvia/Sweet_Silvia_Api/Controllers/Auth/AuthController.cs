@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Sweet_Silvia_Api.Extensions;
 using Sweet_Silvia_Api.Security;
 using Sweet_Silvia_Application.Auth;
+using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.RefreshToken;
 
 namespace Sweet_Silvia_Api.Controllers.Auth;
@@ -26,7 +27,8 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
 
         if (result.IsFailure)
         {
-            return StatusCode(result.Error.StatusCode ?? StatusCodes.Status401Unauthorized, result.Error);
+            var userFacingError = UserFacingErrorMessages.Localize(result.Error);
+            return StatusCode(userFacingError.StatusCode ?? StatusCodes.Status401Unauthorized, userFacingError);
         }
 
         SetRefreshTokenCookie(result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt);
@@ -42,8 +44,8 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
         if (customerRoleId == Guid.Empty)
         {
             return Problem(
-                title: "Customer role is not configured.",
-                detail: "Configure Roles:CustomerRoleId before allowing Google registration.",
+                title: "El registro no está disponible temporalmente.",
+                detail: "No se pudo completar la creación de la cuenta. Inténtalo más tarde.",
                 statusCode: StatusCodes.Status500InternalServerError);
         }
 
@@ -94,7 +96,7 @@ public sealed class AuthController(ISender sender, IWebHostEnvironment environme
         if (result.IsFailure)
         {
             DeleteRefreshTokenCookie();
-            return Unauthorized(result.Error);
+            return Unauthorized(UserFacingErrorMessages.Localize(result.Error));
         }
 
         SetRefreshTokenCookie(result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt);
