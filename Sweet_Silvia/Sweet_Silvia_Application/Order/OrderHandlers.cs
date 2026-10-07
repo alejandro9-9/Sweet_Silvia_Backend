@@ -243,6 +243,13 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("ShippingLocation"));
         }
 
+        if (usesLiveOlvaQuote && address is not null && district.Name.Equals("Ventanilla", StringComparison.OrdinalIgnoreCase))
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Shipping.OlvaRequiresCheckoutLocation",
+                "Para Ventanilla, selecciona el destino y la agencia Olva durante la compra; no uses una direccion guardada del perfil."));
+        }
+
         var isOlvaProvinceDestination = IsOlvaProvinceDestination(department, province);
         if (usesLiveOlvaQuote && !isOlvaProvinceDestination)
         {

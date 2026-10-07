@@ -2,7 +2,7 @@ using Sweet_Silvia_Application.Abstractions.Messaging;
 
 namespace Sweet_Silvia_Application.Address;
 
-public sealed record AddressResponse(Guid Id, Guid UserId, string ReceiverName, string ReceiverPhone, string Country, Guid DepartmentId, Guid ProvinceId, Guid DistrictId, string Line, string? References, bool IsDefault, bool IsActive);
+public sealed record AddressResponse(Guid Id, Guid UserId, string ReceiverName, string ReceiverPhone, string Country, Guid DepartmentId, Guid ProvinceId, Guid DistrictId, string DistrictName, string Line, string? References, bool IsDefault, bool IsActive);
 
 public sealed record CreateAddressCommand(Guid UserId, string ReceiverName, string ReceiverPhone, Guid DepartmentId, Guid ProvinceId, Guid DistrictId, string Line, string? References, bool IsDefault) : ICommand<Guid>;
 

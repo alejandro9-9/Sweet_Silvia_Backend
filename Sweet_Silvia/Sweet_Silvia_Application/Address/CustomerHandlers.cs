@@ -65,7 +65,8 @@ internal sealed class CreateAddressCommandHandler(
         Guid districtId,
         IRepository<DepartmentEntity> departments,
         IRepository<ProvinceEntity> provinces,
-        IRepository<DistrictEntity> districts)
+        IRepository<DistrictEntity> districts,
+        bool allowExistingVentanilla = false)
     {
         var department = departments.Query().FirstOrDefault(department => department.Id == departmentId && department.IsActive);
         if (department is null)
@@ -96,8 +97,20 @@ internal sealed class CreateAddressCommandHandler(
             return Result.Failure(ApplicationErrors.Conflict("Address.InvalidDistrict", "District does not belong to the selected province or is inactive."));
         }
 
+        if (!allowExistingVentanilla && IsVentanilla(department.Name, province.Name, district.Name))
+        {
+            return Result.Failure(ApplicationErrors.Conflict(
+                "Address.OlvaOnlyDistrict",
+                "Ventanilla debe seleccionarse durante la compra con Olva y no puede guardarse como direccion del perfil."));
+        }
+
         return Result.Success();
     }
+
+    internal static bool IsVentanilla(string departmentName, string provinceName, string districtName) =>
+        departmentName.Trim().Equals("Callao", StringComparison.OrdinalIgnoreCase) &&
+        provinceName.Trim().Equals("Callao", StringComparison.OrdinalIgnoreCase) &&
+        districtName.Trim().Equals("Ventanilla", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsDeliveryZone(string departmentName, string provinceName)
     {
@@ -141,7 +154,14 @@ internal sealed class UpdateAddressCommandHandler(
             return Result.Failure(ApplicationErrors.NotFound("Address", request.Id));
         }
 
-        var validation = CreateAddressCommandHandler.ValidateLocation(request.DepartmentId, request.ProvinceId, request.DistrictId, departments, provinces, districts);
+        var validation = CreateAddressCommandHandler.ValidateLocation(
+            request.DepartmentId,
+            request.ProvinceId,
+            request.DistrictId,
+            departments,
+            provinces,
+            districts,
+            allowExistingVentanilla: address.DistrictId == request.DistrictId);
         if (validation.IsFailure)
         {
             return validation;
@@ -184,19 +204,26 @@ internal sealed class DeleteAddressCommandHandler(IRepository<AddressEntity> add
     }
 }
 
-internal sealed class GetAddressByIdQueryHandler(IRepository<AddressEntity> addresses)
+internal sealed class GetAddressByIdQueryHandler(
+    IRepository<AddressEntity> addresses,
+    IRepository<DistrictEntity> districts)
     : IQueryHandler<GetAddressByIdQuery, AddressResponse>
 {
     public Task<Result<AddressResponse>> Handle(GetAddressByIdQuery request, CancellationToken cancellationToken)
     {
         var address = addresses.Query().FirstOrDefault(address => address.Id == request.Id);
+        var districtName = address is null
+            ? null
+            : districts.Query().FirstOrDefault(district => district.Id == address.DistrictId)?.Name;
         return Task.FromResult(address is null
             ? Result.Failure<AddressResponse>(ApplicationErrors.NotFound("Address", request.Id))
-            : Result.Success(CustomerMappings.ToResponse(address)));
+            : Result.Success(CustomerMappings.ToResponse(address, districtName ?? string.Empty)));
     }
 }
 
-internal sealed class GetAddressesByUserQueryHandler(IRepository<AddressEntity> addresses)
+internal sealed class GetAddressesByUserQueryHandler(
+    IRepository<AddressEntity> addresses,
+    IRepository<DistrictEntity> districts)
     : IQueryHandler<GetAddressesByUserQuery, List<AddressResponse>>
 {
     public Task<Result<List<AddressResponse>>> Handle(GetAddressesByUserQuery request, CancellationToken cancellationToken)
@@ -207,7 +234,14 @@ internal sealed class GetAddressesByUserQueryHandler(IRepository<AddressEntity> 
             query = query.Where(address => address.IsActive);
         }
 
-        return Task.FromResult(Result.Success(query.Select(CustomerMappings.ToResponse).ToList()));
+        var districtNames = districts.Query().ToDictionary(district => district.Id, district => district.Name);
+        var responses = query
+            .ToList()
+            .Select(address => CustomerMappings.ToResponse(
+                address,
+                districtNames.GetValueOrDefault(address.DistrictId) ?? string.Empty))
+            .ToList();
+        return Task.FromResult(Result.Success(responses));
     }
 }
 
@@ -744,7 +778,7 @@ internal sealed class GetCouponUsagesByUserQueryHandler(IRepository<CouponUsageE
 
 internal static class CustomerMappings
 {
-    public static AddressResponse ToResponse(AddressEntity address)
+    public static AddressResponse ToResponse(AddressEntity address, string districtName)
     {
         return new AddressResponse(
             address.Id,
@@ -755,6 +789,7 @@ internal static class CustomerMappings
             address.DepartmentId,
             address.ProvinceId,
             address.DistrictId,
+            districtName,
             address.Line.Value,
             address.References,
             address.IsDefault,
