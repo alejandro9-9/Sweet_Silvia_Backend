@@ -1,9 +1,12 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Sweet_Silvia_Application.Abstractions.Messaging;
 using Sweet_Silvia_Application.Abstractions.Shipping;
 using Sweet_Silvia_Application.Common;
 using Sweet_Silvia_Application.ShippingRate;
 using Sweet_Silvia_Domain.Abstractions;
+using Sweet_Silvia_Domain.Courier;
 using OlvaAgencyEntity = Sweet_Silvia_Domain.OlvaAgency.OlvaAgency;
 using CartEntity = Sweet_Silvia_Domain.Cart.Cart;
 using CartItemEntity = Sweet_Silvia_Domain.CartItem.CartItem;
@@ -12,6 +15,7 @@ using DistrictEntity = Sweet_Silvia_Domain.District.District;
 using ProductVariantEntity = Sweet_Silvia_Domain.ProductVariant.ProductVariant;
 using ProductEntity = Sweet_Silvia_Domain.Product.Product;
 using ProvinceEntity = Sweet_Silvia_Domain.Province.Province;
+using ShippingRateEntity = Sweet_Silvia_Domain.ShippingRate.ShippingRate;
 
 namespace Sweet_Silvia_Application.Olva;
 
@@ -197,14 +201,41 @@ internal sealed class GetCachedOlvaProvincesQueryHandler(IRepository<OlvaAgencyE
     }
 }
 
-internal sealed class GetCachedOlvaDistrictsQueryHandler(IRepository<OlvaAgencyEntity> olvaAgencies)
+internal sealed class GetCachedOlvaDistrictsQueryHandler(
+    IRepository<OlvaAgencyEntity> olvaAgencies,
+    IRepository<DepartmentEntity> departments,
+    IRepository<ProvinceEntity> provinces,
+    IRepository<DistrictEntity> districts,
+    IRepository<ShippingRateEntity> shippingRates)
     : IQueryHandler<GetCachedOlvaDistrictsQuery, List<string>>
 {
     public Task<Result<List<string>>> Handle(GetCachedOlvaDistrictsQuery request, CancellationToken cancellationToken)
     {
         var department = OlvaLocationNames.Normalize(request.Department);
         var province = OlvaLocationNames.Normalize(request.Province);
-        var districts = olvaAgencies.Query()
+        var departmentIds = departments.Query().AsEnumerable()
+            .Where(item => item.IsActive && OlvaLocationNames.Normalize(item.Name) == department)
+            .Select(item => item.Id)
+            .ToHashSet();
+        var provinceIds = provinces.Query().AsEnumerable()
+            .Where(item => item.IsActive && departmentIds.Contains(item.DepartmentId) && OlvaLocationNames.Normalize(item.Name) == province)
+            .Select(item => item.Id)
+            .ToHashSet();
+        var ownDeliveryDistrictIds = shippingRates.Query()
+            .Where(rate => rate.IsActive &&
+                rate.CourierType == CourierType.OwnDelivery &&
+                rate.DistrictId.HasValue &&
+                departmentIds.Contains(rate.DepartmentId) &&
+                rate.ProvinceId.HasValue &&
+                provinceIds.Contains(rate.ProvinceId.Value))
+            .Select(rate => rate.DistrictId!.Value)
+            .ToHashSet();
+        var ownDeliveryDistrictNames = districts.Query()
+            .Where(item => item.IsActive && ownDeliveryDistrictIds.Contains(item.Id) && provinceIds.Contains(item.ProvinceId))
+            .AsEnumerable()
+            .Select(item => item.Name);
+
+        var olvaDistricts = olvaAgencies.Query()
             .Where(agency => agency.IsActive && agency.Department != null && agency.Province != null && agency.District != null)
             .AsEnumerable()
             .Where(agency => OlvaLocationNames.Normalize(agency.Department) == department && OlvaLocationNames.Normalize(agency.Province) == province)
@@ -214,7 +245,7 @@ internal sealed class GetCachedOlvaDistrictsQueryHandler(IRepository<OlvaAgencyE
             .OrderBy(name => name)
             .ToList();
 
-        return Task.FromResult(Result.Success(districts));
+        return Task.FromResult(Result.Success(OlvaLocationNames.ExcludeDistrictsWithOwnDelivery(olvaDistricts, ownDeliveryDistrictNames)));
     }
 }
 
@@ -342,6 +373,7 @@ internal sealed class QuoteCustomerOlvaShipmentQueryHandler(
     IRepository<ProvinceEntity> provinces,
     IRepository<DepartmentEntity> departments,
     IRepository<OlvaAgencyEntity> agencies,
+    IRepository<ShippingRateEntity> shippingRates,
     IOlvaCourierClient olvaCourierClient)
     : IQueryHandler<QuoteCustomerOlvaShipmentQuery, OlvaCheckoutQuoteResponse>
 {
@@ -362,6 +394,18 @@ internal sealed class QuoteCustomerOlvaShipmentQueryHandler(
             return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
                 "Shipping.InvalidAgency",
                 "La agencia Olva seleccionada no corresponde al distrito de destino."));
+        }
+
+        if (shippingRates.Query().Any(rate =>
+            rate.IsActive &&
+            rate.CourierType == CourierType.OwnDelivery &&
+            rate.DepartmentId == department.Id &&
+            rate.ProvinceId == province.Id &&
+            rate.DistrictId == district.Id))
+        {
+            return Result.Failure<OlvaCheckoutQuoteResponse>(ApplicationErrors.Conflict(
+                "Shipping.LocalDeliveryRequired",
+                "Este distrito tiene reparto propio y no puede cotizarse por Olva."));
         }
 
         if (district.Ubigeo is not { Length: 6 } || !district.Ubigeo.All(char.IsDigit))
@@ -501,10 +545,34 @@ internal static class OlvaLocationNames
 {
     public static string Normalize(string? value)
     {
-        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        var normalized = string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : RemoveDiacritics(value.Trim()).ToUpperInvariant();
         return normalized.StartsWith("CERCADO DE ", StringComparison.Ordinal)
             ? normalized["CERCADO DE ".Length..].Trim()
             : normalized;
+    }
+
+    public static List<string> ExcludeDistrictsWithOwnDelivery(IEnumerable<string> olvaDistricts, IEnumerable<string> ownDeliveryDistricts)
+    {
+        var excludedNames = ownDeliveryDistricts
+            .Select(Normalize)
+            .Where(name => name.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+
+        return olvaDistricts
+            .Where(IsValid)
+            .Where(name => !excludedNames.Contains(Normalize(name)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name)
+            .ToList();
+    }
+
+    private static string RemoveDiacritics(string value)
+    {
+        var decomposed = value.Normalize(NormalizationForm.FormD);
+        var characters = decomposed.Where(character => CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark);
+        return new string(characters.ToArray()).Normalize(NormalizationForm.FormC);
     }
 
     public static bool Matches(string? actual, string? requested)

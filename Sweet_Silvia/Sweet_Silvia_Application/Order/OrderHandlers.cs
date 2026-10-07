@@ -181,6 +181,16 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("Address", request.AddressId.Value));
         }
 
+        var isDistrictSpecificOwnDelivery = !usesLiveOlvaQuote &&
+            shippingRate!.CourierType == CourierType.OwnDelivery &&
+            shippingRate.DistrictId.HasValue;
+        if (isDistrictSpecificOwnDelivery && (!request.AddressId.HasValue || request.ShippingAgencyId.HasValue))
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Shipping.AddressRequired",
+                "El reparto propio requiere una dirección de entrega y no admite recojo en agencia."));
+        }
+
         if (!request.AddressId.HasValue && !usesLiveOlvaQuote && shippingRate!.DestinationType != ShippingDestinationType.Province)
         {
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
@@ -200,7 +210,7 @@ internal sealed class CreateOrderCommandHandler(
 
         var department = departments.Query()
             .FirstOrDefault(item => item.Id == departmentId.Value && item.IsActive);
-        if (department is null || (usesLiveOlvaQuote && department.DestinationType != ShippingDestinationType.Province))
+        if (department is null)
         {
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("Department", departmentId.Value));
         }
@@ -213,14 +223,6 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.CourierUnavailable",
                 "The selected shipping service is currently unavailable."));
-        }
-
-        if ((!usesLiveOlvaQuote && courier.Type != shippingRate!.CourierType) ||
-            (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency))
-        {
-            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
-                "Shipping.InvalidCourier",
-                "The selected shipping service is not compatible with the destination."));
         }
 
         if (!usesLiveOlvaQuote && (shippingRate!.DestinationType != department.DestinationType ||
@@ -241,7 +243,35 @@ internal sealed class CreateOrderCommandHandler(
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.NotFound("ShippingLocation"));
         }
 
-        if (department.DestinationType == ShippingDestinationType.Province && !request.ShippingAgencyId.HasValue)
+        var isOlvaProvinceDestination = IsOlvaProvinceDestination(department, province);
+        if (usesLiveOlvaQuote && !isOlvaProvinceDestination)
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Shipping.InvalidDestination",
+                "La cotización de Olva solo está disponible para destinos fuera de Lima Metropolitana."));
+        }
+
+        if (usesLiveOlvaQuote && shippingRates.Query().Any(rate =>
+            rate.IsActive &&
+            rate.CourierType == CourierType.OwnDelivery &&
+            rate.DepartmentId == department.Id &&
+            rate.ProvinceId == province.Id &&
+            rate.DistrictId == district.Id))
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Shipping.LocalDeliveryRequired",
+                "Este distrito tiene reparto propio y no puede enviarse por Olva."));
+        }
+
+        if ((!usesLiveOlvaQuote && courier.Type != shippingRate!.CourierType) ||
+            (isOlvaProvinceDestination && courier.Type != CourierType.Agency && !isDistrictSpecificOwnDelivery))
+        {
+            return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
+                "Shipping.InvalidCourier",
+                "El servicio de envío seleccionado no es compatible con el destino."));
+        }
+
+        if (isOlvaProvinceDestination && !isDistrictSpecificOwnDelivery && !request.ShippingAgencyId.HasValue)
         {
             return Result.Failure<CreateOrderResponse>(ApplicationErrors.Conflict(
                 "Shipping.AgencyRequired",
@@ -424,7 +454,9 @@ internal sealed class CreateOrderCommandHandler(
         {
             var baseShippingCost = shippingRate!.CalculateCost(subtotal);
             var volumePricing = ShippingVolumeCalculator.Calculate(
-                department.DestinationType,
+                shippingRate.CourierType == CourierType.OwnDelivery
+                    ? ShippingDestinationType.Lima
+                    : department.DestinationType,
                 lines.Select(line => new ShippingPackageItem(
                     line.Quantity,
                     line.Variant.ShippingWeightKg,
@@ -543,6 +575,17 @@ internal sealed class CreateOrderCommandHandler(
                 total.Currency);
 
         return new CreateOrderResponse(order.Id, total.Amount, total.Currency, formResponse);
+    }
+
+    private static bool IsOlvaProvinceDestination(DepartmentEntity department, ProvinceEntity province)
+    {
+        if (department.DestinationType == ShippingDestinationType.Province)
+        {
+            return true;
+        }
+
+        return OlvaLocationNames.Normalize(department.Name) == "LIMA" &&
+            OlvaLocationNames.Normalize(province.Name) is not "LIMA" and not "LIMA METROPOLITANA";
     }
 
     private static bool ApplyCoupon(

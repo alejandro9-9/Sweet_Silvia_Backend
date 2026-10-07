@@ -132,12 +132,14 @@ public sealed class ShippingRate : Entity
             throw new ArgumentException("Province id is required when district id is provided.", nameof(provinceId));
         }
 
-        if (destinationType == ShippingDestinationType.Province && courierType != CourierType.Agency)
+        var isDistrictSpecificOwnDelivery = courierType == CourierType.OwnDelivery && districtId.HasValue;
+
+        if (destinationType == ShippingDestinationType.Province && courierType != CourierType.Agency && !isDistrictSpecificOwnDelivery)
         {
             throw new ArgumentException("Province shipments should use an agency courier.", nameof(courierType));
         }
 
-        if (destinationType == ShippingDestinationType.Province && serviceType != ShippingServiceType.Agency)
+        if (destinationType == ShippingDestinationType.Province && serviceType != ShippingServiceType.Agency && !isDistrictSpecificOwnDelivery)
         {
             throw new ArgumentException("Province shipments should use agency service.", nameof(serviceType));
         }

@@ -250,6 +250,7 @@ internal sealed class CalculateShippingCostQueryHandler(
             .Where(rate => rate.AppliesTo(request.DepartmentId, request.ProvinceId, request.DistrictId, request.DestinationType))
             .OrderByDescending(rate => rate.DistrictId.HasValue)
             .ThenByDescending(rate => rate.ProvinceId.HasValue)
+            .ThenByDescending(rate => rate.CourierType == CourierType.OwnDelivery)
             .FirstOrDefault();
 
         if (rate is null)
@@ -268,9 +269,12 @@ internal sealed class CalculateShippingCostQueryHandler(
                where cart.UserId == request.CartUserId.Value && cart.IsActive && variant.IsActive
                select new ShippingPackageItem(item.Quantity, variant.ShippingWeightKg, variant.ShippingLengthCm, variant.ShippingWidthCm, variant.ShippingHeightCm)).ToList()
             : null;
+        var pricingDestinationType = rate.CourierType == CourierType.OwnDelivery
+            ? ShippingDestinationType.Lima
+            : request.DestinationType;
         var volumePricing = request.CartUserId.HasValue
-            ? ShippingVolumeCalculator.Calculate(request.DestinationType, packageItems)
-            : ShippingVolumeCalculator.CalculateForQuantity(request.DestinationType, request.PackageItems?.Sum(item => Math.Max(item.Quantity, 0)) ?? 0);
+            ? ShippingVolumeCalculator.Calculate(pricingDestinationType, packageItems)
+            : ShippingVolumeCalculator.CalculateForQuantity(pricingDestinationType, request.PackageItems?.Sum(item => Math.Max(item.Quantity, 0)) ?? 0);
         var finalCost = Money.Create(baseCost.Amount + volumePricing.Surcharge, baseCost.Currency);
 
         return Task.FromResult(Result.Success(new ShippingCostResponse(
@@ -434,7 +438,12 @@ internal sealed class CreateShipmentCommandHandler(
             return Result.Failure<Guid>(ApplicationErrors.NotFound("Department"));
         }
 
-        if (department.DestinationType == ShippingDestinationType.Province && courier.Type != CourierType.Agency)
+        var isOwnDeliveryToAddress = order.AddressId.HasValue &&
+            !order.ShippingAgencyId.HasValue &&
+            courier.Type == CourierType.OwnDelivery;
+        if (department.DestinationType == ShippingDestinationType.Province &&
+            courier.Type != CourierType.Agency &&
+            !isOwnDeliveryToAddress)
         {
             return Result.Failure<Guid>(ApplicationErrors.Conflict(
                 "Shipment.InvalidCourier",
